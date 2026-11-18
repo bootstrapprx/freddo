@@ -34,7 +34,7 @@ export function WhatIfModal({ nodes, currency, currentTotal, budget, onClose, on
       footer={
         <>
           <span className="text-[9px] uppercase tracking-[0.16em] text-overlay0">
-            nada é provisionado até confirmar
+            simulação local · confirmação chama o FMX
           </span>
           <div className="flex gap-2">
             <button type="button" className={ghostButton} onClick={onClose}>
@@ -46,7 +46,7 @@ export function WhatIfModal({ nodes, currency, currentTotal, budget, onClose, on
               className={primaryButton}
               disabled={!valid}
             >
-              provisionar bench
+              criar bench no fmx
             </button>
           </div>
         </>
@@ -139,6 +139,12 @@ export function WhatIfModal({ nodes, currency, currentTotal, budget, onClose, on
             <span className={`tabular-nums ${toneFor(ratio)}`}>{pct(ratio * 100, 0)}</span>
           </div>
         </div>
+
+        <p className="text-[9px] leading-relaxed text-overlay0">
+          ao confirmar, o daemon executa fmx -n create &lt;bench&gt; --apps ... --environment
+          dev|prod. A alocação de custo acima é apenas uma projeção; a telemetria real virá do
+          docker stats quando o bench existir.
+        </p>
 
         <p
           className={`border px-3 py-2 text-[10px] leading-relaxed ${

@@ -128,6 +128,8 @@ export const benches = sqliteTable(
     frappe_version: text("frappe_version"),
     env_tag: text("env_tag").default("dev").notNull(),
     status: text("status").default("stopped").notNull(),
+    operation_id: text("operation_id"),
+    telemetry_source: text("telemetry_source").default("seed").notNull(),
     cpu_pct: real("cpu_pct").default(0).notNull(),
     ram_pct: real("ram_pct").default(0).notNull(),
     created_date: text("created_date").notNull(),
@@ -145,11 +147,52 @@ export const deployments = sqliteTable(
     bench_name: text("bench_name"),
     kind: text("kind").notNull(),
     status: text("status").notNull(),
+    operation_id: text("operation_id"),
+    provider: text("provider"),
     duration_s: real("duration_s"),
     summary: text("summary"),
+    logs: text("logs"),
     created_date: text("created_date").notNull(),
   },
   (table) => [index("deployments_bench_id_idx").on(table.bench_id)],
+);
+
+export const telemetrySamples = sqliteTable(
+  "telemetry_samples",
+  {
+    id: text("id").primaryKey(),
+    owner_id: text("owner_id").notNull(),
+    bench_id: text("bench_id").notNull(),
+    node_id: text("node_id").notNull(),
+    cpu_pct: real("cpu_pct").default(0).notNull(),
+    ram_pct: real("ram_pct").default(0).notNull(),
+    source: text("source").default("unavailable").notNull(),
+    collected_at: text("collected_at").notNull(),
+  },
+  (table) => [
+    index("telemetry_samples_owner_idx").on(table.owner_id),
+    index("telemetry_samples_bench_collected_idx").on(table.bench_id, table.collected_at),
+  ],
+);
+
+export const actionLogs = sqliteTable(
+  "action_logs",
+  {
+    id: text("id").primaryKey(),
+    owner_id: text("owner_id").notNull(),
+    bench_id: text("bench_id"),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    operation_id: text("operation_id"),
+    provider: text("provider"),
+    summary: text("summary"),
+    logs: text("logs"),
+    created_date: text("created_date").notNull(),
+  },
+  (table) => [
+    index("action_logs_owner_idx").on(table.owner_id),
+    index("action_logs_bench_idx").on(table.bench_id),
+  ],
 );
 
 export const costAllocations = sqliteTable(

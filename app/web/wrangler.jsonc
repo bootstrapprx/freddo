@@ -7,6 +7,10 @@
   "observability": {
     "enabled": true,
   },
+  "vars": {
+    "FMX_DAEMON_URL": "http://127.0.0.1:7420",
+    "FMX_TELEMETRY_INTERVAL_S": "15"
+  },
   "d1_databases": [
     {
       "binding": "DB",

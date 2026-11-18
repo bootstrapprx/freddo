@@ -27,6 +27,12 @@ export function LogsTab({ lines = [], running, deployments = [] }) {
         ref={box}
         className="max-h-[220px] min-h-[170px] overflow-y-auto px-4 py-3 text-[10.5px] leading-[1.7] sm:max-h-[260px]"
       >
+        {lines.length === 0 && !running && (
+          <div className="text-overlay0">
+            nenhuma operação FMX registrada para este bench · use [m] migrate ou [s] scale para
+            iniciar uma
+          </div>
+        )}
         {lines.map((line, index) => (
           <div key={`${line.t}-${index}`} className="flex gap-2 sm:gap-3">
             <span className="shrink-0 tabular-nums text-overlay0">{line.t}</span>

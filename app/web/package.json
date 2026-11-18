@@ -12,6 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "daemon:build": "cargo build --offline --manifest-path ../../fmx-control/Cargo.toml",
+    "daemon:dev": "cargo run --offline --manifest-path ../../fmx-control/Cargo.toml",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

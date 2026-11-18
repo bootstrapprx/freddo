@@ -3,6 +3,10 @@ import { blocks, money, toneFor } from "@/lib/finops";
 export function StatusBar({ totalCost, budget, currency, nodeCount, benchCount, clock, daemon }) {
   const ratio = budget ? totalCost / budget : 0;
   const tone = toneFor(ratio);
+  const online = Boolean(daemon?.online);
+  const docker = Boolean(daemon?.docker);
+  const status = !online ? "offline" : docker ? "online" : "sem docker";
+
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface0/70 bg-mantle/50 px-4 py-2.5 text-[11px]">
       <div className="flex items-center gap-2">
@@ -10,7 +14,7 @@ export function StatusBar({ totalCost, budget, currency, nodeCount, benchCount, 
           FMX
         </span>
         <span className="tracking-[0.18em] text-ink/90">CONTROL PLANE</span>
-        <span className="text-overlay0">v0.9.4</span>
+        <span className="text-overlay0">v{daemon?.version || "—"}</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -21,16 +25,19 @@ export function StatusBar({ totalCost, budget, currency, nodeCount, benchCount, 
         <span className="text-sub0">{Math.round(ratio * 100)}%</span>
       </div>
 
-      <div className="ml-auto flex items-center gap-4 text-[10px] text-overlay0">
+      <div className="ml-auto flex flex-wrap items-center gap-4 text-[10px] text-overlay0">
         <span className="flex items-center gap-1.5">
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              daemon === "online" ? "bg-green tui-live" : "bg-peach"
+              online && docker ? "bg-green tui-live" : "bg-peach"
             }`}
           />
-          <span className={daemon === "online" ? "text-green" : "text-peach"}>
-            daemon {daemon}
+          <span className={online && docker ? "text-green" : "text-peach"}>
+            daemon {status}
           </span>
+        </span>
+        <span className="hidden md:inline">
+          {daemon?.provider || "unknown"} · {daemon?.mode || "offline"}
         </span>
         <span className="hidden sm:inline">{nodeCount} nodes</span>
         <span className="hidden sm:inline">{benchCount} benches</span>

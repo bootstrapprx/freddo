@@ -84,8 +84,7 @@ export function AddNodeModal({ onClose, onSubmit }) {
           </div>
         ))}
         <p className="sm:col-span-2 text-[9px] leading-relaxed text-overlay0">
-          o daemon grava o node em SQLite e passa a amostrar cgroups v2 via SSH na primeira coleta
-          de custo.
+          o daemon valida fmx e docker no host local; o node é persistido no D1 do Worker.
         </p>
       </form>
     </ModalFrame>

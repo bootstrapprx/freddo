@@ -41,7 +41,11 @@ function ChartBox({ label, value, values, tone, meta }) {
         <span className="text-[9px] uppercase tracking-[0.22em] text-overlay0">{label}</span>
         <span className={`text-[13px] tabular-nums ${tone}`}>{value}</span>
       </div>
-      <BrailleChart values={values} width={40} height={4} tone={tone} />
+      {values.length ? (
+        <BrailleChart values={values} width={40} height={4} tone={tone} />
+      ) : (
+        <div className="py-2 text-[9px] text-overlay0">sem amostras docker</div>
+      )}
       <div className="mt-1 truncate text-[9px] text-overlay0">{meta}</div>
     </div>
   );
@@ -52,6 +56,7 @@ export function TelemetryPanel({
   node,
   series,
   live,
+  source = "seed",
   tab,
   onTab,
   logs,
@@ -132,7 +137,9 @@ export function TelemetryPanel({
           value={pct(live.cpu)}
           values={series.cpu}
           tone="text-mauve"
-          meta={`${node ? node.vcpu : "-"} vCPU · cgroup v2`}
+          meta={`${node ? node.vcpu : "-"} vCPU · ${
+            source === "docker" ? "docker stats" : source === "unavailable" ? "sem amostra" : "seed (demo)"
+          }`}
         />
         <ChartBox
           label="ram"

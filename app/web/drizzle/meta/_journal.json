@@ -15,6 +15,13 @@
       "when": 1795033285414,
       "tag": "0001_long_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795045079167,
+      "tag": "0002_dapper_morlocks",
+      "breakpoints": true
     }
   ]
 }
