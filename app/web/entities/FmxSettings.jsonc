@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "name": "FmxSettings",
+  "properties": {
+    "monthly_budget": {
+      "type": "number",
+      "description": "Or\u00e7amento mensal m\u00e1ximo em moeda base"
+    },
+    "currency": {
+      "type": "string",
+      "enum": [
+        "USD",
+        "EUR",
+        "BRL"
+      ],
+      "enumColors": [
+        "green",
+        "blue",
+        "yellow"
+      ],
+      "default": "USD"
+    },
+    "alert_threshold": {
+      "type": "number",
+      "description": "Fra\u00e7\u00e3o do or\u00e7amento que dispara alerta (0-1)"
+    },
+    "billing_cycle": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "annual"
+      ],
+      "enumColors": [
+        "blue",
+        "purple"
+      ],
+      "default": "monthly"
+    }
+  },
+  "required": [
+    "monthly_budget"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

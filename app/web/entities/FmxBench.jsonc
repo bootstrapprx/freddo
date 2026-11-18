@@ -1,0 +1,115 @@
+{
+  "type": "object",
+  "name": "FmxBench",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome do bench gerenciado pelo fmx"
+    },
+    "node_id": {
+      "type": "string",
+      "description": "Node que hospeda o bench"
+    },
+    "port": {
+      "type": "number",
+      "description": "Porta HTTP publicada"
+    },
+    "domain": {
+      "type": "string",
+      "description": "Dom\u00ednio do site Frappe"
+    },
+    "site_name": {
+      "type": "string",
+      "description": "Nome do site Frappe"
+    },
+    "frappe_version": {
+      "type": "string",
+      "description": "Tag da imagem frappe/erpnext"
+    },
+    "env_tag": {
+      "type": "string",
+      "enum": [
+        "production",
+        "staging",
+        "dev"
+      ],
+      "enumColors": [
+        "red",
+        "yellow",
+        "blue"
+      ],
+      "default": "dev"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "stopped",
+        "provisioning",
+        "degraded",
+        "failed"
+      ],
+      "enumColors": [
+        "green",
+        "gray",
+        "yellow",
+        "purple",
+        "red"
+      ],
+      "default": "provisioning"
+    },
+    "cpu_pct": {
+      "type": "number",
+      "description": "Uso de CPU em % da capacidade do node"
+    },
+    "ram_pct": {
+      "type": "number",
+      "description": "Uso de RAM em % da capacidade do node"
+    }
+  },
+  "required": [
+    "name",
+    "node_id"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}
