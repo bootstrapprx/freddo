@@ -1,9 +1,8 @@
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
 import { DefaultCatchBoundary } from "@/components/DefaultCatchBoundary";
 import { NotFound } from "@/components/NotFound";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/sooner";
 import { AuthProvider } from "@/lib/AuthContext";
-import { Base44Scripts } from "base44:document";
 import appCss from "@/index.css?url";
 
 export const Route = createRootRoute({
@@ -16,8 +15,8 @@ export const Route = createRootRoute({
       { name: "description", content: "Control plane persistente para Frappe Manager com motor de FinOps preditivo." },
       { name: "theme-color", content: "#11111b" },
     ],
-    // No icon link: the platform adds the app's logo when serving.
     links: [
+      { rel: "icon", href: "/favicon.svg" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -49,10 +48,8 @@ function RootDocument({ children }) {
       <head>
         <HeadContent />
       </head>
-      {/* data-react-root: the builder's preview bridge looks for #root and falls back to this. */}
-      <body data-react-root="true">
+      <body>
         {children}
-        <Base44Scripts />
         <Scripts />
       </body>
     </html>

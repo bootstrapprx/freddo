@@ -11,8 +11,7 @@ node_modules
 *.local
 
 # build output. The Cloudflare Vite plugin emits dist/{client,server} plus the
-# .wrangler/deploy redirect the Base44 publish reads; every build regenerates
-# all of them.
+# .wrangler/deploy redirect; every build regenerates all of them.
 dist
 .wrangler
 .tanstack
@@ -28,5 +27,3 @@ src/routeTree.gen.ts
 .DS_Store
 *.sw?
 
-# Local link to a Base44 app, written by `base44 link`
-base44/.app.jsonc

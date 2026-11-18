@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/AuthContext";
 import { AuthLayout } from "./AuthLayout";
 
-// Signed in to Base44, but not a user of this app (invite-only apps).
+// Signed in, but this account has no access to the app (invite-only deployment).
 export function UserNotRegistered() {
   const { logout } = useAuth();
   return (

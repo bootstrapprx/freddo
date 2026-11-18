@@ -1,4 +1,4 @@
-import { base44 } from "@/api/base44Client";
+import { authClient } from "@/lib/authClient";
 
 function items(page) {
   if (!page) return [];
@@ -14,11 +14,11 @@ function stripId(record) {
 export async function loadControlPlane() {
   try {
     const [nodePage, benchPage, deployPage, allocPage, settingsPage] = await Promise.all([
-      base44.entities.FmxNode.filter({}, { sort: "-created_date", limit: 100 }),
-      base44.entities.FmxBench.filter({}, { sort: "-created_date", limit: 200 }),
-      base44.entities.FmxDeployment.filter({}, { sort: "-created_date", limit: 50 }),
-      base44.entities.FmxCostAllocation.filter({}, { sort: "date", limit: 500 }),
-      base44.entities.FmxSettings.filter({}, { limit: 1 }),
+      authClient.entities.FmxNode.filter({}, { sort: "-created_date", limit: 100 }),
+      authClient.entities.FmxBench.filter({}, { sort: "-created_date", limit: 200 }),
+      authClient.entities.FmxDeployment.filter({}, { sort: "-created_date", limit: 50 }),
+      authClient.entities.FmxCostAllocation.filter({}, { sort: "date", limit: 500 }),
+      authClient.entities.FmxSettings.filter({}, { limit: 1 }),
     ]);
 
     return {
@@ -34,13 +34,13 @@ export async function loadControlPlane() {
 }
 
 export async function createNodeRecord(node) {
-  return base44.entities.FmxNode.create(stripId(node));
+  return authClient.entities.FmxNode.create(stripId(node));
 }
 
 export async function createBenchRecord(bench) {
-  return base44.entities.FmxBench.create(stripId(bench));
+  return authClient.entities.FmxBench.create(stripId(bench));
 }
 
 export async function createDeploymentRecord(deployment) {
-  return base44.entities.FmxDeployment.create(stripId(deployment));
+  return authClient.entities.FmxDeployment.create(stripId(deployment));
 }
