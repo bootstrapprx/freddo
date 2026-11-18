@@ -1,41 +1,47 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { allocatedCost, forecast, utilization } from "@/lib/finops";
-import {
-  sampleAllocations,
-  sampleBenches,
-  sampleDeployments,
-  sampleNodes,
-  sampleSettings,
-  seedLogs,
-} from "@/lib/fmxSample";
+import { controlPlaneQuery, createBench, createDeployment, createNode } from "@/lib/fmxRepo";
+import { sampleSettings, seedLogs } from "@/lib/fmxSample";
 
 const MAX_SERIES = 36;
+const EMPTY = { nodes: [], benches: [], deployments: [], allocations: [], settings: sampleSettings };
 
-// Local control-plane state. The data source is swapped for server functions backed
-// by D1 without changing this hook's public shape.
 export function useControlPlane() {
-  const [nodes, setNodes] = useState(sampleNodes);
-  const [benches, setBenches] = useState(sampleBenches);
-  const [deployments, setDeployments] = useState(sampleDeployments);
-  const [settings] = useState(sampleSettings);
-  const [expanded, setExpanded] = useState(() => new Set(sampleNodes.map((node) => node.id)));
-  const [selectedId, setSelectedId] = useState(sampleBenches[0]?.id ?? null);
+  const queryClient = useQueryClient();
+  const { data = EMPTY } = useQuery(controlPlaneQuery);
+  const nodes = data.nodes ?? [];
+  const benches = data.benches ?? [];
+  const deployments = data.deployments ?? [];
+  const allocations = data.allocations ?? [];
+  const settings = data.settings ?? sampleSettings;
+
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [selectedId, setSelectedId] = useState(null);
   const [tab, setTab] = useState("logs");
   const [modal, setModal] = useState(null);
   const [running, setRunning] = useState(false);
   const [clock, setClock] = useState("");
   const [tick, setTick] = useState(0);
-  const [liveHistory, setLiveHistory] = useState(() =>
-    Object.fromEntries(
-      sampleBenches.map((bench) => [
-        bench.id,
-        {
-          cpu: Array.from({ length: MAX_SERIES }, (_, i) => clamp(bench.cpu_pct + Math.sin((i + bench.name.length) / 3) * 4)),
-          ram: Array.from({ length: MAX_SERIES }, (_, i) => clamp(bench.ram_pct + Math.cos((i + bench.name.length) / 4) * 3)),
-        },
-      ]),
-    ),
-  );
+  const [liveHistory, setLiveHistory] = useState({});
+
+  useEffect(() => {
+    setExpanded(new Set(nodes.map((node) => node.id)));
+    setSelectedId((current) =>
+      benches.some((bench) => bench.id === current) ? current : (benches[0]?.id ?? null),
+    );
+    setLiveHistory(
+      Object.fromEntries(
+        benches.map((bench) => [
+          bench.id,
+          {
+            cpu: Array.from({ length: MAX_SERIES }, (_, i) => clamp(bench.cpu_pct + Math.sin((i + bench.name.length) / 3) * 4)),
+            ram: Array.from({ length: MAX_SERIES }, (_, i) => clamp(bench.ram_pct + Math.cos((i + bench.name.length) / 4) * 3)),
+          },
+        ]),
+      ),
+    );
+  }, [nodes, benches]);
 
   useEffect(() => {
     const update = () => setClock(new Date().toLocaleTimeString("pt-BR", { hour12: false, timeZone: "UTC" }));
@@ -48,26 +54,7 @@ export function useControlPlane() {
   }, []);
 
   useEffect(() => {
-    if (!running) return undefined;
-    const timer = setTimeout(() => {
-      setDeployments((current) => [
-        {
-          id: `d-${Date.now()}`,
-          bench_id: selectedId,
-          kind: "migrate",
-          status: "success",
-          duration_s: 38.4,
-          created_date: new Date().toISOString(),
-          summary: "migrate concluído · v15.42.1",
-        },
-        ...current,
-      ]);
-      setRunning(false);
-    }, 2600);
-    return () => clearTimeout(timer);
-  }, [running, selectedId]);
-
-  useEffect(() => {
+    if (!tick) return;
     setLiveHistory((current) => {
       const next = { ...current };
       benches.forEach((bench) => {
@@ -81,6 +68,11 @@ export function useControlPlane() {
       return next;
     });
   }, [tick, benches]);
+
+  const invalidate = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: controlPlaneQuery.queryKey }),
+    [queryClient],
+  );
 
   const tree = useMemo(
     () => nodes.map((node) => ({ node, benches: benches.filter((bench) => bench.node_id === node.id) })),
@@ -132,11 +124,11 @@ export function useControlPlane() {
 
   const history = useMemo(() => {
     const byDate = new Map();
-    sampleAllocations.forEach((row) => {
+    allocations.forEach((row) => {
       byDate.set(row.date, (byDate.get(row.date) ?? 0) + Number(row.allocated_cost || 0));
     });
     return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, cost]) => ({ date, cost }));
-  }, []);
+  }, [allocations]);
 
   const forecastData = useMemo(() => forecast(history), [history]);
   const logs = useMemo(() => seedLogs(selectedBench, selectedNode), [selectedBench, selectedNode]);
@@ -152,46 +144,40 @@ export function useControlPlane() {
 
   const openModal = useCallback((name) => setModal(name), []);
   const closeModal = useCallback(() => setModal(null), []);
-  const runMigration = useCallback(() => setRunning(true), []);
 
-  const addNode = useCallback((values) => {
-    const id = `n-${Date.now()}`;
-    setNodes((current) => [
-      ...current,
-      {
-        id,
-        status: "online",
-        ssh_user: "root",
-        currency: "USD",
-        vcpu: Number(values.vcpu) || 2,
-        ram_gb: Number(values.ram_gb) || 4,
-        ...values,
-      },
-    ]);
-    setExpanded((current) => new Set([...current, id]));
-  }, []);
+  const addNode = useCallback(
+    async (values) => {
+      await createNode(values);
+      await invalidate();
+    },
+    [invalidate],
+  );
 
-  const addBench = useCallback((values) => {
-    const nodeId = values.node_id || nodes[0]?.id;
-    const bench = {
-      id: `b-${Date.now()}`,
-      node_id: nodeId,
-      port: Number(values.port) || 8080,
-      status: "provisioning",
-      env_tag: values.env_tag || "dev",
-      cpu_pct: Number(values.cpu_pct) || 0,
-      ram_pct: Number(values.ram_pct) || 0,
-      ...values,
-    };
-    setBenches((current) => [...current, bench]);
-    setSelectedId(bench.id);
-  }, [nodes]);
+  const addBench = useCallback(
+    async (values) => {
+      const row = await createBench(values);
+      await invalidate();
+      setSelectedId(row.id);
+    },
+    [invalidate],
+  );
+
+  const runMigration = useCallback(async () => {
+    if (!selectedId) return;
+    setRunning(true);
+    try {
+      await createDeployment({ bench_id: selectedId, kind: "migrate" });
+      await invalidate();
+    } finally {
+      setRunning(false);
+    }
+  }, [selectedId, invalidate]);
 
   return {
     nodes,
     benches,
     deployments,
-    allocations: sampleAllocations,
+    allocations,
     settings,
     tree,
     expanded,
@@ -202,6 +188,7 @@ export function useControlPlane() {
     selectedNode,
     live,
     series,
+    selectedSeries: series,
     costs,
     costRows,
     totalCost,

@@ -1,126 +1,143 @@
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { KeyRound, Lock, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { AuthLayout } from "@/components/auth/AuthLayout";
+import { AuthError, SubmitButton } from "@/components/auth/parts";
 import { Input } from "@/components/ui/input";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Label } from "@/components/ui/label";
-import { Loader2, Lock, Mail } from "lucide-react";
-import { GoogleIcon } from "@/components/auth/GoogleIcon";
-import { MfaFlow } from "@/components/auth/MfaFlow";
-import { MfaManage } from "@/components/auth/MfaManage";
-import { MfaHeader, MfaNotice, MfaScreen, useAppInfo } from "@/components/auth/MfaParts";
-import { finishSignIn, resumeMfa, signInToManageMfa, signInWithProvider } from "@/lib/authMfaFlow";
-import { safeReturnTo } from "@/lib/authReturnTo";
+import { authClient, disableTwoFactor, enableTwoFactor, verifyTotp } from "@/lib/authClient";
 
-const PROVIDERS = [
-  { id: "google", flag: "enable_google_login", name: "Google" },
-  { id: "microsoft", flag: "enable_microsoft_login", name: "Microsoft" },
-  { id: "facebook", flag: "enable_facebook_login", name: "Facebook" },
-  { id: "apple", flag: "enable_apple_login", name: "Apple" },
-];
-
-// The /mfa page: finishes a Google, Microsoft, Facebook, Apple or SSO sign-in that needs a second step
-// (?mfa_code=…), and opened directly it is the two-factor authentication settings page.
 export function MfaPage() {
-  const returnTo = safeReturnTo();
-  const [challenge, setChallenge] = useState(null);
-  const [managing, setManaging] = useState(null);
-  const [resuming, setResuming] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    resumeMfa()
-      .then((result) => {
-        // A remembered device signs in straight away; otherwise continue the second step here.
-        if (result?.access_token) return finishSignIn(result.access_token, returnTo);
-        if (result) setChallenge(result);
-        setResuming(false);
-      })
-      .catch((err) => { setError(err); setResuming(false); });
-  }, []);
-
-  if (resuming) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-  return (
-    <MfaScreen>
-      {managing ? <MfaManage session={managing} returnTo={returnTo} />
-        : challenge ? <MfaFlow challenge={challenge} returnTo={returnTo} onManage={setManaging} />
-        : <ConfirmIdentity returnTo={returnTo} onChallenge={setChallenge} initialError={error} />}
-    </MfaScreen>
-  );
-}
-
-// Changing two-factor settings starts with a fresh sign-in, then a code from an enrolled method.
-function ConfirmIdentity({ returnTo, onChallenge, initialError }) {
-  const info = useAppInfo();
-  const options = info ? info.auth_config || {} : null;
-  const [email, setEmail] = useState("");
+  const { data: session, refetch } = authClient.useSession();
+  const enabled = Boolean(session?.user?.twoFactorEnabled);
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(initialError);
+  const [code, setCode] = useState("");
+  const [enrollment, setEnrollment] = useState(null);
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e) => {
+  async function startEnrollment(e) {
     e.preventDefault();
-    setError(null);
+    setError("");
     setBusy(true);
     try {
-      onChallenge(await signInToManageMfa(email, password));
+      const data = await enableTwoFactor(password);
+      setEnrollment(data);
+      setPassword("");
     } catch (err) {
-      setError(err);
+      setError(err.message || "Falha ao iniciar a configuração do TOTP");
+    } finally {
       setBusy(false);
     }
-  };
+  }
 
-  const withProvider = (provider) => signInWithProvider(provider, returnTo, { manage: true }).catch(setError);
-  const providers = options ? PROVIDERS.filter((provider) => options[provider.flag] ?? provider.id === "google") : [];
+  async function confirmEnrollment(e) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await verifyTotp(code, false);
+      await refetch();
+      setEnrollment(null);
+      setCode("");
+    } catch (err) {
+      setError(err.message || "Código inválido");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable(e) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await disableTwoFactor(password);
+      await refetch();
+      setPassword("");
+    } catch (err) {
+      setError(err.message || "Falha ao desativar o TOTP");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (enrollment) {
+    return (
+      <AuthLayout icon={ShieldCheck} title="Configurar autenticador" subtitle="Escaneie o URI abaixo e confirme com um código">
+        <div className="session-record-block space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Adicione este URI ao seu aplicativo autenticador (1Password, Aegis, Google Authenticator…):
+          </p>
+          <code className="block break-all rounded-md border border-border bg-muted/40 p-3 text-[11px]">
+            {enrollment.totpURI}
+          </code>
+          {enrollment.backupCodes?.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs text-muted-foreground">Guarde estes códigos de recuperação:</p>
+              <div className="grid grid-cols-2 gap-1 font-mono text-xs">
+                {enrollment.backupCodes.map((backupCode) => (
+                  <code key={backupCode} className="rounded bg-muted/40 px-2 py-1">{backupCode}</code>
+                ))}
+              </div>
+            </div>
+          )}
+          <AuthError>{error}</AuthError>
+          <form onSubmit={confirmEnrollment} className="space-y-3">
+            <Label htmlFor="mfa-code">Código do autenticador</Label>
+            <InputOTP maxLength={6} value={code} onChange={setCode} autoComplete="one-time-code">
+              <InputOTPGroup>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <InputOTPSlot key={i} index={i} />
+                ))}
+              </InputOTPGroup>
+            </InputOTP>
+            <SubmitButton busy={busy} busyLabel="Ativando..." disabled={busy || code.length < 6}>
+              Ativar TOTP
+            </SubmitButton>
+          </form>
+        </div>
+      </AuthLayout>
+    );
+  }
 
   return (
-    <>
-      <MfaHeader title={info && `Welcome to ${info.name || "the app"}`} description="Sign in to continue" />
-      <MfaNotice error={error} />
-      {!options && !error && <Loader2 className="mx-auto w-6 h-6 animate-spin text-muted-foreground" />}
-      {options && (
-        <div className="space-y-4">
-          {providers.map((provider) => (
-            <Button key={provider.id} variant="outline" className="w-full h-12 text-sm font-medium" onClick={() => withProvider(provider.id)}>
-              {provider.id === "google" && <GoogleIcon className="w-5 h-5 mr-2" />}
-              Continue with {provider.name}
-            </Button>
-          ))}
-          {(options.enable_sso_login || options.use_workspace_sso) && (
-            <Button variant="outline" className="w-full h-12 text-sm font-medium" onClick={() => withProvider("sso")}>
-              Continue with SSO
-            </Button>
-          )}
-          {options.enable_username_password && (
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="mfa-email">Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-                  <Input id="mfa-email" type="email" autoComplete="email" placeholder="you@example.com" value={email}
-                    onChange={(e) => setEmail(e.target.value)} className="pl-10 h-12" required />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mfa-password">Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-                  <Input id="mfa-password" type="password" autoComplete="current-password" placeholder="••••••••" value={password}
-                    onChange={(e) => setPassword(e.target.value)} className="pl-10 h-12" required />
-                </div>
-              </div>
-              <Button type="submit" className="w-full h-12 font-medium" disabled={busy}>
-                {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Continue
-              </Button>
-            </form>
-          )}
-        </div>
+    <AuthLayout
+      icon={enabled ? ShieldCheck : KeyRound}
+      title={enabled ? "TOTP ativo" : "Ativar TOTP"}
+      subtitle={enabled ? "Você usará um código do aplicativo ao entrar" : "Proteja sua conta com um aplicativo autenticador"}
+    >
+      <AuthError>{error}</AuthError>
+      {enabled ? (
+        <form onSubmit={disable} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="mfa-disable-password">Senha atual</Label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input id="mfa-disable-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-12 pl-10" required />
+            </div>
+          </div>
+          <SubmitButton busy={busy} busyLabel="Desativando...">
+            Desativar TOTP
+          </SubmitButton>
+        </form>
+      ) : (
+        <form onSubmit={startEnrollment} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="mfa-enable-password">Senha atual</Label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input id="mfa-enable-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-12 pl-10" required />
+            </div>
+          </div>
+          <SubmitButton busy={busy} busyLabel="Gerando segredo...">
+            Configurar autenticador
+          </SubmitButton>
+        </form>
       )}
-    </>
+      <p className="mt-6 text-center text-xs text-muted-foreground">
+        Somente TOTP está disponível neste MVP. SMS e login social não são suportados.
+      </p>
+    </AuthLayout>
   );
 }

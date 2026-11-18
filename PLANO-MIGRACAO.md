@@ -1,6 +1,6 @@
 # Plano de migração — sair do Base44
 
-Status: **F1 e F2 concluídas; F3/F4 pendentes**.
+Status: **F1 a F6 concluídas e validadas**.
 Escopo: substituir dependências, runtime, serviços e referências do Base44 por implementação própria, preservando o produto (FMX Control Plane & FinOps).
 
 Decisões confirmadas: **D1 + Drizzle**, **better-auth**, **email/senha + TOTP**, **execução por fases começando por build/deps**.
@@ -9,10 +9,11 @@ Decisões confirmadas: **D1 + Drizzle**, **better-auth**, **email/senha + TOTP**
 
 - ✅ **F1:** `npm install` (com lockfile), `eslint.config.js` corrigido; conflito de peers das deps de IA resolvido ao removê-las.
 - ✅ **F2:** `@base44/*` removidos; plugin e módulo `base44:document` fora do build; middlewares e handler de erro próprios; Worker renomeado `freddo`; favicon e alias `@/` adicionados ao Vite; `.gitignore` limpo; arquivos gerenciados, IA, `app-params`, consent MCP e helpers de imagem do Base44 removidos.
-- ✅ Hook ausente `src/hooks/useControlPlane.jsx` recriado com dados locais (`fmxSample`) para destravar o build — **ainda sem D1**.
-- ✅ `npm run build` e `npm run lint` passando; nenhuma referência a Base44 em `src/`, configs ou `package.json`.
-- ⏳ **F3/F4:** persistência D1/Drizzle e auth better-auth (incluindo substituir `src/lib/authClient.js`, temporário, e reescrever `fmxRepo.js`). `AGENTS.md`/README ainda serão reescritos na F5.
-- Nenhum commit foi criado; alterações estão no working tree.
+- ✅ **F3:** schema Drizzle e migrações em `drizzle/`; binding `DB` no `wrangler.jsonc`; `getDb()` por request; server functions com Zod e checagem de `owner_id`; `useControlPlane`/`fmxRepo` passaram a ler e gravar no D1. Seed de demonstração idempotente por tabela, com inserção de alocações em lotes para respeitar o limite de 100 bindings por statement do D1; `settings` isolado por usuário (`owner_id`).
+- ✅ **F4:** better-auth com `drizzleAdapter`, `twoFactor()` e `tanstackStartCookies()`; rota `/api/auth/*`; middlewares de sessão; Login, Registro, Reset e MFA reescritos. `createCsrfMiddleware` protege as server functions. Sign-up, sign-in, get-session, ativação/verificação TOTP e `twoFactorRedirect` validados por smoke test.
+- ✅ **F5:** `AGENTS.md`, README raiz, `app/web/README.md`, `.dev.vars.example` e `.gitignore` reescritos; fluxos sem equivalente removidos; nenhuma dependência ou reference ao Base44 permanece no código-fonte.
+- ✅ **F6:** `npm run lint` e `npm run build` passando; D1 local validado com seed completo, reload autenticado e escrita real (`createNodeFn`) persistida; varredura final sem resultados fora deste plano histórico.
+- F1/F2 foram commitadas pelo usuário em `a4a8a37`. F3/F4/F5 permanecem no working tree.
 
 ---
 
@@ -98,23 +99,23 @@ Decisões confirmadas: **D1 + Drizzle**, **better-auth**, **email/senha + TOTP**
 - Reescrever `src/start.js`, `src/server.js`; deletar `src/lib/error-capture*.js`; trocar middlewares em `auth-middleware.js`.
 - Renomear Worker, limpar `.gitignore` e `__root.jsx` (sem `Base44Scripts`/`data-react-root`).
 
-**F3 — Dados e persistência**
+**F3 — Dados e persistência — ✅ concluída**
 - Gerar schema/migrações D1 a partir dos 6 JSONC (incluindo `created_by_id`, `role`).
 - Reescrever `fmxRepo.js` e criar `server-fns.js` com Zod + `requireUser`.
 - Implementar `useControlPlane.jsx` e endotar o seed `fmxSample.js` via migração/seed script.
 - Validar que `/` renderiza nós/benches/deployments/alocações/settings vindos do banco local.
 
-**F4 — Autenticação**
+**F4 — Autenticação — ✅ concluída**
 - Instalar/configurar o provider escolhido; tabelas de usuário/sessão/conta; migrar `AuthContext.jsx`, `AuthGate.jsx`, `authMfa*.js`, páginas de login/registro/reset/MFA.
 - Remover fluxos sem equivalente (consent MCP, “usuário não registrado” da plataforma, login-info `by-id`, redirecionamentos `/auth/mfa`).
 - Garantir `returnTo` seguro e testar sign-up → login → logout → reset → MFA.
 
-**F5 — Limpeza final de referências**
+**F5 — Limpeza final de referências — ✅ concluída**
 - Remover helpers de imagem/IA, deps de template não usadas (Stripe, Leaflet, Three, etc., após confirmar imports), e comentários/docs.
 - Reescrever `AGENTS.md`, `CLAUDE.md`, README e `.env.example`.
 - Rodar `grep -ri base44 .` e `grep -ri "_b44\|x-b44" .` até não haver resultados no código-fonte.
 
-**F6 — Validação e entrega**
+**F6 — Validação e entrega — ✅ concluída (commits F3/F5 pendentes)**
 - `npm install`, `npm run lint`, `npm run build`, `npm run dev` + smoke test das rotas `/`, `/login`, `/blueprint`.
 - Verificar que nenhum segredo vai para o bundle do browser.
 - Commit único por fase, com o diff revisado.

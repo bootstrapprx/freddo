@@ -1,5 +1,11 @@
-import { createStart } from "@tanstack/react-start";
+import { createCsrfMiddleware, createStart } from "@tanstack/react-start";
+import { authMiddleware, requestContextMiddleware } from "@/lib/auth-middleware";
 
-// Server functions and routes share the request context; authentication is layered in
-// by src/lib/auth-middleware.js as the auth implementation lands.
-export const startInstance = createStart(() => ({}));
+const csrfMiddleware = createCsrfMiddleware({
+  filter: (ctx) => ctx.handlerType === "serverFn",
+});
+
+export const startInstance = createStart(() => ({
+  requestMiddleware: [csrfMiddleware, requestContextMiddleware],
+  functionMiddleware: [authMiddleware],
+}));

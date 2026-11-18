@@ -1,7 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "freddo",
-  "compatibility_date": "2026-09-01",
+  "compatibility_date": "2026-11-18",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "src/server.js"
+  "main": "src/server.js",
+  "observability": {
+    "enabled": true,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "freddo",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle",
+    },
+  ],
 }

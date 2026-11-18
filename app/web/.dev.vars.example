@@ -1,0 +1,7 @@
+# Copie para .dev.vars para rodar localmente. Em produção, use `wrangler secret put`.
+BETTER_AUTH_SECRET=troque-por-uma-chave-aleatoria-longa
+BETTER_AUTH_URL=http://localhost:5173
+
+# Opcional: sem estes valores os links de reset são apenas logados no terminal.
+RESEND_API_KEY=
+EMAIL_FROM=

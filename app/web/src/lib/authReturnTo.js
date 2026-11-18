@@ -1,22 +1,20 @@
-// Post-auth destination, shared by the auth pages and the MCP consent page.
+// Post-auth destination, shared by the auth pages and the login gate.
 // Keep the check in one place — it is security-sensitive.
 //
-// Reads ?returnTo= (our pages) or ?from_url= (what the platform's redirectToLogin
-// and login-gate redirects send). A same-origin check alone is not enough: a
-// value like "/.//evil.com" or "/\evil.com" parses same-origin but normalizes
-// to a protocol-relative "//evil.com" when assigned to location.href, so the
-// resolved path must start with exactly one "/" and contain no backslash.
+// A same-origin check alone is not enough: a value like "/.//evil.com" or
+// "/\evil.com" parses same-origin but normalizes to a protocol-relative URL when
+// assigned to location.href, so the resolved path must start with exactly one
+// "/" and contain no backslash.
 //
 // An auth page is never a destination: coming back to /reset-password?token=…
-// would carry a live one-time credential through the login round-trip (and,
-// via Google, into the provider's OAuth state), and the other three would just
-// loop. `/oauth/consent` is a legitimate destination and is not in this set.
-const AUTH_PAGES = new Set(["/login", "/register", "/forgot-password", "/reset-password"]);
+// would carry a live one-time credential through the login round-trip, and the
+// other pages would just loop.
+const AUTH_PAGES = new Set(["/login", "/register", "/forgot-password", "/reset-password", "/mfa"]);
 
 export function safeReturnTo(search) {
   if (typeof window === "undefined") return "/";
   const params = new URLSearchParams(search ?? window.location.search);
-  return sanitizeReturnTo(params.get("returnTo") || params.get("from_url"));
+  return sanitizeReturnTo(params.get("returnTo"));
 }
 
 export function sanitizeReturnTo(raw) {
@@ -24,10 +22,9 @@ export function sanitizeReturnTo(raw) {
   try {
     const url = new URL(raw, window.location.origin);
     if (url.origin !== window.location.origin) return "/";
-    // Bootstrap params must never ride through a login round-trip and get
-    // persisted into the fresh session. App-flow params (e.g. the consent ctx) stay.
-    for (const p of ["access_token", "clear_access_token", "app_id", "app_base_url", "functions_version", "from_url", "returnTo"]) {
-      url.searchParams.delete(p);
+    // One-time credentials must never ride through a login round-trip.
+    for (const param of ["returnTo", "token", "access_token"]) {
+      url.searchParams.delete(param);
     }
     if (AUTH_PAGES.has(url.pathname.replace(/\/+$/, "") || "/")) return "/";
     const path = url.pathname + url.search;
@@ -38,20 +35,11 @@ export function sanitizeReturnTo(raw) {
   }
 }
 
-// The current page as a returnTo value: same rules as any other destination, so
-// an auth page or a bootstrap param never becomes the way back.
 export function currentPath() {
   if (typeof window === "undefined") return "/";
   return sanitizeReturnTo(window.location.pathname + window.location.search);
 }
 
-// The current page as the absolute URL the platform login's from_url expects.
-export function currentUrl() {
-  if (typeof window === "undefined") return "/";
-  return window.location.origin + currentPath();
-}
-
-// `search` for a <Link> to an auth page that should come back to `returnTo`.
 export function returnToSearch(returnTo) {
   return returnTo && returnTo !== "/" ? { returnTo } : {};
 }
