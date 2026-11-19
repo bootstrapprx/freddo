@@ -84,7 +84,8 @@ export function AddNodeModal({ onClose, onSubmit }) {
           </div>
         ))}
         <p className="sm:col-span-2 text-[9px] leading-relaxed text-overlay0">
-          o daemon valida fmx e docker no host local; o node é persistido no D1 do Worker.
+          o daemon valida fmx e o runtime de containers (docker ou podman) no host local; o node é
+          persistido no D1 do Worker.
         </p>
       </form>
     </ModalFrame>

@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::executor::{self, CommandSpec};
+use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +38,18 @@ pub struct TelemetryResult {
     pub samples: Vec<TelemetrySample>,
 }
 
-pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryResult {
+pub async fn collect(
+    request: TelemetryRequest,
+    config: &Config,
+    provider: &Provider,
+) -> TelemetryResult {
+    let runtime: &'static str = if provider.runtime.kind == "podman" {
+        "podman"
+    } else {
+        "docker"
+    };
+    let ps_timeout = config.health_timeout.max(Duration::from_secs(3));
+    let stats_timeout = config.health_timeout.max(Duration::from_secs(5));
     let mut samples = Vec::with_capacity(request.benches.len());
     let mut available = false;
     let mut last_error: Option<String> = None;
@@ -52,7 +65,7 @@ pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryRes
         };
         let prefix = format!("fm__{}", name.replace('.', "_"));
         let ps_spec = CommandSpec::new(
-            "docker",
+            runtime,
             vec![
                 "ps".to_string(),
                 "--all".to_string(),
@@ -61,13 +74,13 @@ pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryRes
                 "--format".to_string(),
                 "{{.ID}}\t{{.Names}}".to_string(),
             ],
-            Duration::from_secs(4),
+            ps_timeout,
         );
 
         let containers = match executor::run(&ps_spec).await {
             Ok(result) if result.status == 0 => parse_ps(&result.stdout),
             Ok(result) => {
-                last_error = clean_error(&result.stderr).or_else(|| clean_error(&result.stdout));
+                last_error = clean_error(&result.stderr, runtime).or_else(|| clean_error(&result.stdout, runtime));
                 samples.push(unavailable(&bench));
                 continue;
             }
@@ -84,19 +97,26 @@ pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryRes
             continue;
         }
 
-        let ids: Vec<&str> = containers.iter().map(|(id, _)| id.as_str()).collect();
-        let mut args = vec![
-            "stats".to_string(),
+        let mut args = vec!["stats".to_string()];
+        if runtime == "podman" {
+            // O podman exige --all para ver containers parados, mas rejeita --all
+            // combinado com IDs. Casamos as linhas pelo nome do container.
+            args.push("--all".to_string());
+        }
+        args.extend([
             "--no-stream".to_string(),
             "--format".to_string(),
             "{{json .}}".to_string(),
-        ];
-        args.extend(ids.into_iter().map(str::to_string));
-        let stats_spec = CommandSpec::new("docker", args, Duration::from_secs(5));
+        ]);
+        if runtime != "podman" {
+            let ids: Vec<&str> = containers.iter().map(|(id, _)| id.as_str()).collect();
+            args.extend(ids.into_iter().map(str::to_string));
+        }
+        let stats_spec = CommandSpec::new(runtime, args, stats_timeout);
         let stats = match executor::run(&stats_spec).await {
             Ok(result) if result.status == 0 => parse_stats(&result.stdout),
             Ok(result) => {
-                last_error = clean_error(&result.stderr).or_else(|| clean_error(&result.stdout));
+                last_error = clean_error(&result.stderr, runtime).or_else(|| clean_error(&result.stdout, runtime));
                 samples.push(unavailable(&bench));
                 continue;
             }
@@ -120,7 +140,7 @@ pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryRes
         }
 
         if found == 0 {
-            last_error = Some(format!("docker stats sem dados para {prefix}"));
+            last_error = Some(format!("{runtime} stats sem dados para {prefix}"));
             samples.push(unavailable(&bench));
             continue;
         }
@@ -131,11 +151,10 @@ pub async fn collect(request: TelemetryRequest, config: &Config) -> TelemetryRes
             node_id: bench.node_id,
             cpu_pct: round2(cpu_sum / found as f64),
             ram_pct: round2(ram_sum / found as f64),
-            source: "docker",
+            source: runtime,
         });
     }
 
-    let _ = config;
     TelemetryResult {
         available,
         collected_at: crate::model::now_iso(),
@@ -170,17 +189,28 @@ fn parse_ps(output: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn parse_stats(output: &str) -> std::collections::HashMap<String, (f64, f64)> {
-    output
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter_map(|row| {
-            let id = field(&row, &["ID", "Id", "id", "Container", "Name"])?;
-            let cpu = number_field(&row, &["CPUPerc", "CpuPerc", "cpu_perc", "CPUPercent"]);
-            let ram = number_field(&row, &["MemPerc", "MemoryPerc", "mem_perc", "MemoryPercent"]);
-            Some((id, (cpu, ram)))
-        })
-        .collect()
+/// Indexa cada linha por ID e por nome: o `podman ps` devolve IDs curtos enquanto
+/// o `podman stats` reporta `ContainerID` completo.
+fn parse_stats(output: &str) -> HashMap<String, (f64, f64)> {
+    let mut stats = HashMap::new();
+    for row in output.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+        let cpu = number_field(
+            &row,
+            &["CPU", "CPUPerc", "CpuPerc", "cpu_perc", "CPUPercent"],
+        );
+        let ram = number_field(
+            &row,
+            &["MemPerc", "MemoryPerc", "mem_perc", "MemoryPercent"],
+        );
+        let value = (cpu, ram);
+        if let Some(id) = field(&row, &["ContainerID", "ID", "Id", "id", "Container"]) {
+            stats.insert(id, value);
+        }
+        if let Some(name) = field(&row, &["Name", "Names"]) {
+            stats.insert(name, value);
+        }
+    }
+    stats
 }
 
 fn field<'a>(row: &'a Value, keys: &[&str]) -> Option<String> {
@@ -211,12 +241,13 @@ fn parse_percent(value: &str) -> f64 {
         .clamp(0.0, 100.0)
 }
 
-fn clean_error(text: &str) -> Option<String> {
+fn clean_error(text: &str, runtime: &str) -> Option<String> {
+    let fallback = format!("comando {runtime} falhou");
     let value = text
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .unwrap_or("comando docker falhou");
+        .unwrap_or(&fallback);
     Some(value.to_string())
 }
 
@@ -236,6 +267,21 @@ mod tests {
         );
         let stats = parse_stats(input);
         assert_eq!(stats.get("abc"), Some(&(12.5, 40.2)));
+        assert_eq!(stats.get("fm__erp_prod__frappe"), Some(&(12.5, 40.2)));
+    }
+
+    #[test]
+    fn parses_podman_stats_jsonl() {
+        let input = concat!(
+            "{\"AvgCPU\":0,\"ContainerID\":\"a18e0f0e22538f5a1e7e6e350a88a0709d50d596446962cf9d2925b912d142a8\",",
+            "\"Name\":\"fm__erp_prod__frappe\",\"CPU\":12.5,\"MemPerc\":40.2}\n"
+        );
+        let stats = parse_stats(input);
+        assert_eq!(
+            stats.get("a18e0f0e22538f5a1e7e6e350a88a0709d50d596446962cf9d2925b912d142a8"),
+            Some(&(12.5, 40.2))
+        );
+        assert_eq!(stats.get("fm__erp_prod__frappe"), Some(&(12.5, 40.2)));
     }
 
     #[test]

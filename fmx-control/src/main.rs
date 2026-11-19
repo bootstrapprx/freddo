@@ -19,12 +19,14 @@ async fn main() -> std::io::Result<()> {
     let bind = config.bind.clone();
 
     eprintln!(
-        "fmx-control {} · {bind} · provider={} mode={} fmx={} docker={}",
+        "fmx-control {} · {bind} · provider={} mode={} fmx={} runtime={} ({}) · compose={}",
         env!("CARGO_PKG_VERSION"),
         provider.kind,
         provider.mode,
         if provider.fmx.ok { "ok" } else { "indisponível" },
-        if provider.docker.ok { "ok" } else { "indisponível" }
+        provider.runtime.kind,
+        if provider.runtime.ok { "ok" } else { "indisponível" },
+        if provider.compose.ok { "ok" } else { "indisponível" }
     );
 
     let state = SharedState::new(api::AppState {

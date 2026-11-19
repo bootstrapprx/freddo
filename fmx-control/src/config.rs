@@ -8,11 +8,19 @@ pub enum ProviderMode {
     Mock,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMode {
+    Auto,
+    Docker,
+    Podman,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind: String,
     pub fmx_bin: String,
     pub provider_mode: ProviderMode,
+    pub runtime_mode: RuntimeMode,
     pub daemon_token: Option<String>,
     pub fmx_home: Option<String>,
     pub command_timeout: Duration,
@@ -33,6 +41,16 @@ impl Config {
                 "fmx" => ProviderMode::Fmx,
                 "mock" => ProviderMode::Mock,
                 _ => ProviderMode::Auto,
+            },
+            runtime_mode: match env::var("FMX_RUNTIME")
+                .unwrap_or_else(|_| "auto".to_string())
+                .trim()
+                .to_lowercase()
+                .as_str()
+            {
+                "docker" => RuntimeMode::Docker,
+                "podman" => RuntimeMode::Podman,
+                _ => RuntimeMode::Auto,
             },
             daemon_token: env::var("FMX_DAEMON_TOKEN").ok().filter(|v| !v.is_empty()),
             fmx_home: env::var("FRAPPE_MANAGER_HOME").ok().filter(|v| !v.is_empty()),

@@ -4,8 +4,10 @@ export function StatusBar({ totalCost, budget, currency, nodeCount, benchCount, 
   const ratio = budget ? totalCost / budget : 0;
   const tone = toneFor(ratio);
   const online = Boolean(daemon?.online);
-  const docker = Boolean(daemon?.docker);
-  const status = !online ? "offline" : docker ? "online" : "sem docker";
+  const runtimeKind = daemon?.runtime?.kind || "docker";
+  const runtimeOk = Boolean(daemon?.runtime?.ok ?? daemon?.docker);
+  const runtimeLabel = runtimeKind === "none" || runtimeKind === "unknown" ? "runtime" : runtimeKind;
+  const status = !online ? "offline" : runtimeOk ? "online" : `sem ${runtimeLabel}`;
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface0/70 bg-mantle/50 px-4 py-2.5 text-[11px]">
@@ -29,15 +31,16 @@ export function StatusBar({ totalCost, budget, currency, nodeCount, benchCount, 
         <span className="flex items-center gap-1.5">
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              online && docker ? "bg-green tui-live" : "bg-peach"
+              online && runtimeOk ? "bg-green tui-live" : "bg-peach"
             }`}
           />
-          <span className={online && docker ? "text-green" : "text-peach"}>
+          <span className={online && runtimeOk ? "text-green" : "text-peach"}>
             daemon {status}
           </span>
         </span>
         <span className="hidden md:inline">
-          {daemon?.provider || "unknown"} · {daemon?.mode || "offline"}
+          {daemon?.provider || "unknown"} · {daemon?.mode || "offline"} · runtime {runtimeLabel}
+          {daemon?.runtime?.shim ? " (shim)" : ""}
         </span>
         <span className="hidden sm:inline">{nodeCount} nodes</span>
         <span className="hidden sm:inline">{benchCount} benches</span>

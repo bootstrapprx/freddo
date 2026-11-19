@@ -142,8 +142,8 @@ export function WhatIfModal({ nodes, currency, currentTotal, budget, onClose, on
 
         <p className="text-[9px] leading-relaxed text-overlay0">
           ao confirmar, o daemon executa fmx -n create &lt;bench&gt; --apps ... --environment
-          dev|prod. A alocação de custo acima é apenas uma projeção; a telemetria real virá do
-          docker stats quando o bench existir.
+          dev|prod. A alocação de custo acima é apenas uma projeção; a telemetria real virá do stats
+          do runtime ativo (docker ou podman) quando o bench existir.
         </p>
 
         <p

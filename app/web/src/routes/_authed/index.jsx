@@ -21,8 +21,9 @@ function ControlPlanePage() {
   const budget = cp.settings.monthly_budget;
   const currency = cp.settings.currency;
   const source = cp.live[cp.selectedBench?.id]?.source || "seed";
+  const runtimeKind = cp.daemon.runtime?.kind || "docker";
   const daemonLabel = cp.daemon.online
-    ? `${cp.daemon.provider} ${cp.daemon.mode} · ${cp.daemon.version || "?"}`
+    ? `${cp.daemon.provider} ${cp.daemon.mode} · ${runtimeKind} · ${cp.daemon.version || "?"}`
     : "offline";
 
   const handleAction = (action) => {
@@ -89,9 +90,10 @@ function ControlPlanePage() {
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[9px] uppercase tracking-[0.22em] text-overlay0">
           <span>
-            provider {cp.daemon.provider} · docker {cp.daemon.docker ? "ok" : "indisponível"} ·
-            telemetria {cp.telemetryStatus?.samples ? "docker" : "demo/indisponível"} · D1 fonte da
-            verdade
+            provider {cp.daemon.provider} · runtime {runtimeKind}{" "}
+            {cp.daemon.runtime?.ok ? "ok" : "indisponível"} · compose{" "}
+            {cp.daemon.compose ? "ok" : "indisponível"} · telemetria{" "}
+            {cp.telemetryStatus?.samples ? runtimeKind : "demo/indisponível"} · D1 fonte da verdade
           </span>
           <span className="flex items-center gap-3">
             <button

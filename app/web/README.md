@@ -7,7 +7,7 @@ FMX control plane e dashboard de FinOps, rodando em Cloudflare Workers com TanSt
 - Node.js 20+ e npm
 - Wrangler 4+ (instalado como dev dependency)
 - Rust/Cargo e o CLI `fmx` 0.20+ no `PATH` para o daemon `fmx-control`
-- Docker ativo no host para provisionar benches e coletar telemetria real
+- Docker **ou** Podman 6+ com `podman-compose` no host para provisionar benches e coletar telemetria real
 
 ## Setup local
 
@@ -24,7 +24,9 @@ O seed de demonstração (nodes, benches, deployments, alocações e configuraç
 
 ## Daemon fmx-control
 
-O Worker não executa `fmx` diretamente. O daemon Rust em `../../fmx-control` roda no mesmo host do Docker e expõe uma API em loopback. Ele detecta `fmx` no `PATH`, executa operações assíncronas com ID/eventos e coleta telemetria com `docker ps`/`docker stats`. O D1 continua sendo a fonte da verdade.
+O Worker não executa `fmx` diretamente. O daemon Rust em `../../fmx-control` roda no mesmo host do runtime de containers e expõe uma API em loopback. Ele detecta `fmx` no `PATH`, executa operações assíncronas com ID/eventos e coleta telemetria com `docker` ou `podman` (`ps`/`stats`). O D1 continua sendo a fonte da verdade.
+
+Em hosts sem Docker, o daemon usa Podman e injeta um shim `docker` → `podman` no PATH das operações do `fmx`, porque o Frappe-Manager chama a CLI `docker` diretamente. `FMX_RUNTIME=auto` prefere Docker e faz fallback para Podman; `FMX_RUNTIME=podman` força o shim.
 
 ```bash
 npm run daemon:build
@@ -39,11 +41,11 @@ Variáveis em `.dev.vars` (local) ou `wrangler secret put` (produção):
 | `FMX_TELEMETRY_INTERVAL_S` | `15` | Intervalo mínimo entre coletas persistidas. |
 | `FMX_DAEMON_TOKEN` | — | Token Bearer exigido pelo daemon nas rotas `/v1`. |
 
-Configuração do daemon: `FMX_BIND`, `FMX_BIN`, `FMX_PROVIDER` (`auto|fmx|mock`), `FRAPPE_MANAGER_HOME`, `FMX_COMMAND_TIMEOUT`, `FMX_HEALTH_TIMEOUT`. Detalhes em `../../fmx-control/README.md`.
+Configuração do daemon: `FMX_BIND`, `FMX_BIN`, `FMX_PROVIDER` (`auto|fmx|mock`), `FMX_RUNTIME` (`auto|docker|podman`), `FRAPPE_MANAGER_HOME`, `FMX_COMMAND_TIMEOUT`, `FMX_HEALTH_TIMEOUT`. Detalhes em `../../fmx-control/README.md`.
 
 Ações da UI chamam comandos reais do Frappe-Manager: `fmx -n create`, `fmx shell <bench> -c "bench --site <site> migrate"`, `fmx -n migrate <bench> --auto-proceed` e `bench set-config -g background_workers N` seguido de `fmx start --reconfigure-workers` e `fmx restart --workers --supervisor`. Não existem `fmx node`, `fmx scale` ou `fmx migrate --bench`.
 
-Se Docker não estiver disponível, o daemon responde `503 DOCKER_UNAVAILABLE`, a telemetria fica marcada como `unavailable` e a UI mostra o estado real — sem números inventados. Os dados de demonstração seguem marcados como `seed (demo)`.
+Se nenhum runtime estiver disponível (ou se o runtime forcado falhar), o daemon responde `503 RUNTIME_UNAVAILABLE`, a telemetria fica marcada como `unavailable` e a UI mostra o estado real — sem números inventados. Os dados de demonstração seguem marcados como `seed (demo)`.
 
 ## Banco de dados
 

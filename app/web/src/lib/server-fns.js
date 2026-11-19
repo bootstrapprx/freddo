@@ -255,7 +255,14 @@ async function daemonView() {
       mode: "offline",
       available: false,
       docker: false,
+      podman: false,
       compose: false,
+      runtime: {
+        kind: "unknown",
+        ok: false,
+        text: result.error || "daemon indisponível",
+        shim: null,
+      },
       error: result.error,
     };
   }
@@ -267,7 +274,14 @@ async function daemonView() {
     mode: data.mode || "unknown",
     available: Boolean(data.available),
     docker: Boolean(data.docker?.ok),
+    podman: Boolean(data.podman?.ok),
     compose: Boolean(data.compose?.ok),
+    runtime: {
+      kind: data.runtime?.kind || "docker",
+      ok: Boolean(data.runtime?.ok),
+      text: data.runtime?.text || null,
+      shim: data.runtime?.shim || null,
+    },
     version: data.version || null,
     command: data.command || null,
     fmx: data.fmx?.text || null,
@@ -395,7 +409,9 @@ async function collectTelemetry(db, ownerId) {
     return { ok: false, error: result.error, samples: 0 };
   }
 
-  const samples = (result.data?.samples || []).filter((sample) => sample.source === "docker");
+  const samples = (result.data?.samples || []).filter(
+    (sample) => sample.source && sample.source !== "unavailable",
+  );
   if (samples.length) {
     const stamp = result.data?.collected_at || now();
     await insertInBatches(
@@ -524,7 +540,7 @@ export const createNodeFn = createServerFn({ method: "POST" })
       benchId: null,
       status: daemon.ok && ready ? "success" : "failed",
       summary: daemon.ok
-        ? `node ${data.name} ${ready ? "validado" : "registrado sem FMX/Docker"}`
+        ? `node ${data.name} ${ready ? "validado" : "registrado sem FMX/runtime"}`
         : `node ${data.name} registrado sem preflight: ${daemon.error}`,
       logs: normalizeEvents(daemon.data?.checks?.map((check) => ({
         time: stamp,

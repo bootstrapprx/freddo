@@ -5,7 +5,7 @@ use crate::model::{
     ScaleInput,
 };
 use crate::operations::Operations;
-use crate::provider::{Provider, RuntimeStatus};
+use crate::provider::{ActiveRuntime, Provider, RuntimeStatus};
 use crate::telemetry::{TelemetryRequest, TelemetryResult};
 use axum::extract::{Path, Request, State};
 use axum::http::{header::AUTHORIZATION, StatusCode};
@@ -123,8 +123,11 @@ struct HealthData {
     command: Option<String>,
     authenticated: bool,
     fmx: RuntimeStatus,
+    /// Probe bruta da CLI docker, mantida para compatibilidade.
     docker: RuntimeStatus,
+    podman: RuntimeStatus,
     compose: RuntimeStatus,
+    runtime: ActiveRuntime,
 }
 
 async fn health(State(state): State<SharedState>) -> Response {
@@ -138,7 +141,9 @@ async fn health(State(state): State<SharedState>) -> Response {
             authenticated: state.config.daemon_token.is_some(),
             fmx: state.provider.fmx.clone(),
             docker: state.provider.docker.clone(),
+            podman: state.provider.podman.clone(),
             compose: state.provider.compose.clone(),
+            runtime: state.provider.runtime.clone(),
         },
         None,
     )
@@ -164,7 +169,7 @@ async fn list_nodes(State(state): State<SharedState>) -> Response {
         vec![NodeData {
             name: "local".to_string(),
             host: "127.0.0.1".to_string(),
-            ready: state.provider.available && state.provider.docker.ok,
+            ready: state.provider.available && state.provider.runtime.ok,
             checks: vec![
                 Check {
                     name: "fmx",
@@ -172,9 +177,14 @@ async fn list_nodes(State(state): State<SharedState>) -> Response {
                     detail: state.provider.fmx.text.clone(),
                 },
                 Check {
-                    name: "docker",
-                    ok: state.provider.docker.ok,
-                    detail: state.provider.docker.text.clone(),
+                    name: state.provider.runtime.kind,
+                    ok: state.provider.runtime.ok,
+                    detail: state.provider.runtime.text.clone(),
+                },
+                Check {
+                    name: "compose",
+                    ok: state.provider.compose.ok,
+                    detail: state.provider.compose.text.clone(),
                 },
             ],
         }],
@@ -207,7 +217,7 @@ async fn preflight_node(State(state): State<SharedState>, Json(input): Json<Node
         NodeData {
             name: input.name.trim().to_string(),
             host: input.host.trim().to_string(),
-            ready: state.provider.available && state.provider.docker.ok,
+            ready: state.provider.available && state.provider.runtime.ok,
             checks: vec![
                 Check {
                     name: "fmx",
@@ -215,9 +225,14 @@ async fn preflight_node(State(state): State<SharedState>, Json(input): Json<Node
                     detail: state.provider.fmx.text.clone(),
                 },
                 Check {
-                    name: "docker",
-                    ok: state.provider.docker.ok,
-                    detail: state.provider.docker.text.clone(),
+                    name: state.provider.runtime.kind,
+                    ok: state.provider.runtime.ok,
+                    detail: state.provider.runtime.text.clone(),
+                },
+                Check {
+                    name: "compose",
+                    ok: state.provider.compose.ok,
+                    detail: state.provider.compose.text.clone(),
                 },
             ],
         },
@@ -507,7 +522,8 @@ async fn collect_telemetry(
     State(state): State<SharedState>,
     Json(request): Json<TelemetryRequest>,
 ) -> Response {
-    let result: TelemetryResult = crate::telemetry::collect(request, &state.config).await;
+    let result: TelemetryResult =
+        crate::telemetry::collect(request, &state.config, &state.provider).await;
     ok(result, None)
 }
 
@@ -523,11 +539,13 @@ fn ensure_ready(state: &SharedState) -> Result<(), Response> {
             None,
         ));
     }
-    if !state.provider.docker.ok {
+    if !state.provider.runtime.ok {
         return Err(fail(
             StatusCode::SERVICE_UNAVAILABLE,
-            "DOCKER_UNAVAILABLE",
-            state.provider.docker.text.clone().unwrap_or_else(|| "Docker indisponível".to_string()),
+            "RUNTIME_UNAVAILABLE",
+            state.provider.runtime.text.clone().unwrap_or_else(|| {
+                format!("runtime {} indisponível", state.provider.runtime.kind)
+            }),
             None,
         ));
     }
@@ -544,7 +562,7 @@ fn command(state: &SharedState, args: Vec<String>) -> CommandSpec {
     if let Some(home) = &state.config.fmx_home {
         spec = spec.with_env("FRAPPE_MANAGER_HOME", home);
     }
-    spec
+    state.provider.prepare(spec)
 }
 
 fn spawn_execution(state: SharedState, id: String, steps: Vec<CommandSpec>) {

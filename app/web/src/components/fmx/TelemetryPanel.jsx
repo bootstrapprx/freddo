@@ -44,7 +44,7 @@ function ChartBox({ label, value, values, tone, meta }) {
       {values.length ? (
         <BrailleChart values={values} width={40} height={4} tone={tone} />
       ) : (
-        <div className="py-2 text-[9px] text-overlay0">sem amostras docker</div>
+        <div className="py-2 text-[9px] text-overlay0">sem amostras de runtime</div>
       )}
       <div className="mt-1 truncate text-[9px] text-overlay0">{meta}</div>
     </div>
@@ -138,7 +138,11 @@ export function TelemetryPanel({
           values={series.cpu}
           tone="text-mauve"
           meta={`${node ? node.vcpu : "-"} vCPU · ${
-            source === "docker" ? "docker stats" : source === "unavailable" ? "sem amostra" : "seed (demo)"
+            source === "docker" || source === "podman"
+              ? `${source} stats`
+              : source === "unavailable"
+                ? "sem amostra"
+                : "seed (demo)"
           }`}
         />
         <ChartBox

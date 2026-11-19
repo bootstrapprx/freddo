@@ -1,3 +1,5 @@
+use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -5,6 +7,7 @@ pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
+    pub path_prefix: Option<PathBuf>,
     pub timeout: Duration,
 }
 
@@ -14,12 +17,19 @@ impl CommandSpec {
             program: program.into(),
             args,
             envs: Vec::new(),
+            path_prefix: None,
             timeout,
         }
     }
 
     pub fn with_env(mut self, key: &str, value: &str) -> Self {
         self.envs.push((key.to_string(), value.to_string()));
+        self
+    }
+
+    /// Antepenha um diretório ao PATH, usado para expor o shim `docker` → `podman`.
+    pub fn with_path_prefix(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.path_prefix = Some(dir.into());
         self
     }
 
@@ -59,6 +69,15 @@ pub async fn run(spec: &CommandSpec) -> Result<CommandResult, ExecutorError> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+
+    if let Some(prefix) = &spec.path_prefix {
+        let current = env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![prefix.clone()];
+        paths.extend(env::split_paths(&current));
+        if let Ok(path) = env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
 
     match tokio::time::timeout(spec.timeout, command.output()).await {
         Ok(Ok(output)) => Ok(CommandResult {

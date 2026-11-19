@@ -28,6 +28,7 @@ Variáveis de ambiente:
 | `FMX_BIND` | `127.0.0.1:7420` | Endereço HTTP do daemon. |
 | `FMX_BIN` | `fmx` | Nome ou caminho do binário `fmx`. |
 | `FMX_PROVIDER` | `auto` | `auto`, `fmx` ou `mock`. No `auto`, detecta `fmx` no `PATH`. |
+| `FMX_RUNTIME` | `auto` | `auto`, `docker` ou `podman`. No `auto`, prefere Docker e usa Podman como fallback. |
 | `FMX_DAEMON_TOKEN` | — | Se definido, exige `Authorization: Bearer <token>` nas rotas `/v1`. |
 | `FRAPPE_MANAGER_HOME` | — | Raiz do Frappe-Manager, encaminhada ao CLI. |
 | `FMX_COMMAND_TIMEOUT` | `300` | Timeout das operações, em segundos. |
@@ -35,13 +36,13 @@ Variáveis de ambiente:
 
 ## API
 
-- `GET /healthz` — versão, provider, `fmx --version`, `docker --version` e `docker compose version`.
+- `GET /healthz` — versão, provider, `fmx --version`, probes brutos de `docker`/`podman`, compose e `runtime: { kind, ok, text, shim }`.
 - `GET/POST /v1/nodes` — inventário/local e preflight de host.
 - `POST /v1/benches` — inicia `fmx -n create <bench> --apps ... --environment dev|prod`.
 - `POST /v1/benches/:bench/migrations` — `target: site|infra|all`.
 - `POST /v1/benches/:bench/workers/concurrency` — `replicas: 1..20`, `scope: workers|web`.
 - `GET /v1/operations/:id` — status, eventos e resultado da operação.
-- `POST /v1/telemetry/collect` — `docker ps` + `docker stats`, com `source: docker|unavailable`.
+- `POST /v1/telemetry/collect` — `ps`/`stats` do runtime ativo, com `source: docker|podman|unavailable`.
 
 Respostas usam o envelope:
 
@@ -55,7 +56,16 @@ Respostas usam o envelope:
 }
 ```
 
-Códigos HTTP: `200` leitura, `202` operação aceita, `400` argumento inválido, `401` token inválido, `409` operação concorrente, `503` FMX/Docker indisponíveis.
+Códigos HTTP: `200` leitura, `202` operação aceita, `400` argumento inválido, `401` token inválido, `409` operação concorrente, `503` FMX/runtime de containers indisponíveis (`FMX_UNAVAILABLE` ou `RUNTIME_UNAVAILABLE`).
+
+## Docker e Podman
+
+O Frappe-Manager 0.20 chama a CLI `docker` diretamente (inclusive `docker version --format json`, que exige uma chave `Server`). Em hosts sem Docker, o daemon detecta `podman` + `podman-compose`, cria um diretório temporário com um shim executável chamado `docker` e o antepenha ao `PATH` **apenas dos comandos `fmx`**:
+
+- `docker version --format json` é respondido com o JSON do `podman version`, acrescido de `Server`.
+- Qualquer outro argumento é repassado para `podman` (`docker compose up` → `podman compose up`).
+
+O shim é removido quando o daemon encerra. A telemetria não usa o shim: ela chama `podman ps --all`/`podman stats --all --no-stream` diretamente quando `FMX_RUNTIME=podman` (ou quando o modo `auto` cai no Podman), mantendo `source: "podman"` nas amostras. Com Docker disponível, nada muda: `source: "docker"`.
 
 ## Segurança
 

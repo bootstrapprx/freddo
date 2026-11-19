@@ -24,6 +24,9 @@ const EMPTY = {
     provider: "unknown",
     mode: "offline",
     docker: false,
+    podman: false,
+    compose: false,
+    runtime: { kind: "unknown", ok: false, text: null, shim: null },
     error: "daemon não consultado",
   },
 };
@@ -107,7 +110,7 @@ export function useControlPlane() {
     [nodes, selectedBench],
   );
 
-  // Histórico vem apenas das amostras persistidas pelo daemon (docker stats).
+  // Histórico vem apenas das amostras persistidas pelo daemon (docker/podman stats).
   // Sem container/daemon não há série: não existe telemetria simulada.
   const telemetryByBench = useMemo(() => {
     const map = new Map();
