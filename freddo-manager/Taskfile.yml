@@ -124,6 +124,27 @@ tasks:
     cmds:
       - bash "{{.DEPLOY_DIR}}/backup.sh" "{{.BACKUP_DIR}}"
 
+  deploy:prereq:
+    desc: Cria contas do sistema e diretórios de deploy (idempotente)
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        for user in "{{.API_USER}}" "{{.COLLECTOR_USER}}"; do
+          if ! id -u "$user" >/dev/null 2>&1; then
+            $SUDO useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
+          fi
+        done
+        if ! id -u "{{.EXEC_USER}}" >/dev/null 2>&1; then
+          echo "dono dos benches ausente: {{.EXEC_USER}} (crie antes ou ajuste EXEC_USER)" >&2
+          exit 1
+        fi
+        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 700 "{{.STATE_DIR}}"
+        $SUDO install -d -o root -g root -m 700 "{{.CONFIG_DIR}}"
+        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 755 "{{.FM_HOME}}"
+        echo "deploy:prereq ok"
+
   deploy:check:
     desc: Valida usuários, diretórios e build antes do deploy
     cmds:
@@ -178,6 +199,8 @@ tasks:
         SUDO=""
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
         $SUDO install -d -m 700 "{{.CONFIG_DIR}}"
+        EXEC_UID="$(id -u "{{.API_USER}}" 2>/dev/null || printf '%s' '{{.EXECUTOR_UID}}')"
+        EXEC_GID="$(id -g "{{.API_USER}}" 2>/dev/null || printf '%s' '{{.EXECUTOR_GID}}')"
         for name in api executor collector; do
           tmp="$(mktemp)"
           sed \
@@ -186,15 +209,27 @@ tasks:
             -e 's|^FREDDO_FM_HOME=.*|FREDDO_FM_HOME={{.FM_HOME}}|' \
             -e 's|^FREDDO_PUBLIC_ORIGIN=.*|FREDDO_PUBLIC_ORIGIN={{.PUBLIC_ORIGIN}}|' \
             -e 's|^FREDDO_CORS_ORIGINS=.*|FREDDO_CORS_ORIGINS={{.CORS_ORIGINS}}|' \
-            -e 's|^FREDDO_EXECUTOR_UID=.*|FREDDO_EXECUTOR_UID={{.EXECUTOR_UID}}|' \
-            -e 's|^FREDDO_EXECUTOR_GID=.*|FREDDO_EXECUTOR_GID={{.EXECUTOR_GID}}|' \
+            -e "s|^FREDDO_EXECUTOR_UID=.*|FREDDO_EXECUTOR_UID=$EXEC_UID|" \
+            -e "s|^FREDDO_EXECUTOR_GID=.*|FREDDO_EXECUTOR_GID=$EXEC_GID|" \
             "{{.INSTALL_DIR}}/.env.example" > "$tmp"
           printf 'FREDDO_CONTAINER_RUNTIME=%s\nFREDDO_DOCKER_SOCKET=%s\n' \
             "{{.CONTAINER_RUNTIME}}" "{{.DOCKER_SOCKET}}" >> "$tmp"
           $SUDO install -m 600 "$tmp" "{{.CONFIG_DIR}}/$name.env"
           rm -f "$tmp"
         done
-        echo "envs gerados em {{.CONFIG_DIR}}"
+        echo "envs gerados em {{.CONFIG_DIR}} (uid/gid do executor: $EXEC_UID/$EXEC_GID)"
+
+  deploy:bootstrap:
+    desc: Cria a credencial da API como usuario dono dos benches
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        $SUDO -u "{{.EXEC_USER}}" -H env \
+          FREDDO_HOME="{{.STATE_DIR}}" \
+          FREDDO_FM_HOME="{{.FM_HOME}}" \
+          "{{.INSTALL_DIR}}/.venv/bin/freddo-manager" bootstrap {{.CLI_ARGS}}
 
   deploy:units:
     desc: Instala units systemd, recarrega e reinicia a stack
@@ -256,11 +291,13 @@ tasks:
       - sudo systemctl restart freddo.target
 
   deploy:
-    desc: Deploy completo (check + arquivos + env + units)
+    desc: Deploy completo (pre-requisitos + arquivos + env + bootstrap + units)
     cmds:
+      - task: deploy:prereq
       - task: deploy:check
       - task: deploy:files
       - task: deploy:env
+      - task: deploy:bootstrap
       - task: deploy:units
 
   deploy:cloudflare:

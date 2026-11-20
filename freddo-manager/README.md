@@ -63,29 +63,22 @@ Abra `http://localhost:5173`. A API fica em `http://127.0.0.1:8710/api/v1`.
 
 ### Produção (systemd + Cloudflare Access)
 
+O caminho recomendado é `task deploy`: ele cria as contas `freddo-api` e
+`freddo-collector`, os diretórios com dono/permissões corretos, copia o código, gera os
+`.env` com o uid/gid reais da conta da API, cria a credencial (senha digitada no terminal)
+e instala/reinicia os units. O usuário dono dos benches (`EXEC_USER`, padrão `freddo`) deve
+existir antes; em hosts Docker ele precisa pertencer ao grupo `docker`.
+
 ```bash
-# 1) instalar
-sudo python3 -m venv /opt/freddo-manager/.venv
-sudo /opt/freddo-manager/.venv/bin/pip install -e /opt/freddo-manager
-cd web && npm ci && npm run build && cd ..
-
-# 2) contas e permissoes
-sudo useradd --system --home /nonexistent freddo-api
-sudo useradd --system --home /nonexistent freddo-collector
-sudo usermod -aG docker freddo-collector
-sudo install -d -o freddo -g freddo -m 700 /var/lib/freddo-manager
-sudo install -d -o root -g root -m 700 /etc/freddo-manager
-
-# 3) credencial (como usuario dono dos benches)
-sudo -u freddo -H FREDDO_HOME=/var/lib/freddo-manager \
-  /opt/freddo-manager/.venv/bin/freddo-manager bootstrap
-
-# 4) units: ajuste FREDDO_EXECUTOR_UID/GID com `id -u freddo-api` / `id -g freddo-api`
-sudo cp deploy/*.service deploy/*.target /etc/systemd/system/
-sudo cp .env.example /etc/freddo-manager/api.env   # edite os valores
-sudo systemctl daemon-reload
-sudo systemctl enable --now freddo.target
+task verify
+task deploy FM_HOME=/home/freddo/frappe PUBLIC_ORIGIN=https://console.seudominio.com \
+  EXECUTOR_UID=$(id -u freddo-api) EXECUTOR_GID=$(id -g freddo-api)
 ```
+
+Para bootstrap sem segundo fator, passe `--no-totp`:
+`task deploy:bootstrap -- --no-totp --force`. Para instalação manual, os passos
+equivalentes estão em [`Taskfile.yml`](Taskfile.yml) (`deploy:prereq`, `deploy:files`,
+`deploy:env`, `deploy:bootstrap`, `deploy:units`).
 
 O Executor roda como dono dos benches (grupo `docker` em hosts Docker); a API roda como
 `freddo-api`, sem acesso ao runtime, e só consegue falar com o socket graças ao
@@ -213,9 +206,11 @@ Deploy em host Docker:
 ```bash
 task deploy \
   PUBLIC_ORIGIN=https://console.example.com \
-  EXECUTOR_UID=$(id -u freddo-api) \
-  EXECUTOR_GID=$(id -g freddo-api)
+  FM_HOME=/home/freddo/frappe
 ```
+
+`EXECUTOR_UID`/`EXECUTOR_GID` são derivados automaticamente da conta da API; as vars
+do Taskfile só são usadas como fallback se a conta ainda não existir.
 
 Deploy em host Podman (após `task deploy`, aplica drop-ins que removem o grupo
 `docker` e forçam o socket rootless):
@@ -226,7 +221,8 @@ task deploy:podman \
   XDG_RUNTIME_DIR=/run/user/1000
 ```
 
-Outras tarefas: `task deploy:check`, `task deploy:env`, `task deploy:units`,
+Outras tarefas: `task deploy:prereq`, `task deploy:check`, `task deploy:env`,
+`task deploy:bootstrap`, `task deploy:units`,
 `task deploy:status`, `task deploy:logs -- -n 100`, `task deploy:restart`,
 `task deploy:cloudflare`, `task cloudflare:status`, `task saas:deploy` e
 `task deploy:docker` para reverter os drop-ins.
