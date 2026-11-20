@@ -19,6 +19,7 @@ vars:
   API_USER: freddo-api
   EXEC_USER: freddo
   COLLECTOR_USER: freddo-collector
+  STATE_GROUP: freddo-manager
   EXECUTOR_UID: "1001"
   EXECUTOR_GID: "1001"
 
@@ -38,29 +39,77 @@ tasks:
       - task --list
 
   deploy:preflight:
-    desc: Verifica sistema, benches, fmx e runtime antes de alterar o host
+    desc: Diagnostica e corrige contas e sockets do runtime antes do deploy
     cmds:
       - |
         set -eu
         fail=0
         check() { label="$1"; shift; if ! "$@" >/dev/null 2>&1; then echo "FALTA: $label" >&2; fail=1; else echo "OK: $label"; fi; }
         as_exec() { if [ "$(id -u)" -eq 0 ]; then runuser -u '{{.EXEC_USER}}' -- "$@"; else sudo -u '{{.EXEC_USER}}' -H "$@"; fi; }
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO=sudo
+        if [ "$(id -u)" -ne 0 ] && ! sudo -v; then
+          echo 'FALTA: sudo autorizado para corrigir o host.' >&2
+          exit 1
+        fi
         check 'systemd/systemctl (deploy nativo)' command -v systemctl
+        if [ ! -d /run/systemd/system ]; then
+          echo 'FALTA: execute o deploy em um host Linux iniciado com systemd.' >&2
+          exit 1
+        fi
         check 'Python >= 3.12' python3 -c 'import sys; assert sys.version_info >= (3,12)'
         check 'Node.js' command -v node
         check 'npm (build web)' command -v npm
-        if [ "$(id -u)" -ne 0 ]; then check 'sudo' command -v sudo; fi
+        for user in '{{.API_USER}}' '{{.COLLECTOR_USER}}'; do
+          if ! id -u "$user" >/dev/null 2>&1; then
+            echo "Corrigindo: criando conta de serviço $user"
+            $SUDO useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
+          fi
+        done
+        if ! getent group '{{.STATE_GROUP}}' >/dev/null; then
+          echo "Corrigindo: criando grupo compartilhado {{.STATE_GROUP}}"
+          $SUDO groupadd --system '{{.STATE_GROUP}}'
+        fi
         if ! id -u "{{.EXEC_USER}}" >/dev/null 2>&1; then
           echo "FALTA: usuário {{.EXEC_USER}} dono dos benches (ajuste EXEC_USER ou crie-o)" >&2; fail=1
         else
           FM_HOME='{{.FM_HOME}}'
           [ -n "$FM_HOME" ] || FM_HOME="$(cat '{{.CONFIG_DIR}}/fm-home' 2>/dev/null || true)"
           [ -n "$FM_HOME" ] || FM_HOME="$(getent passwd '{{.EXEC_USER}}' | cut -d: -f6)/frappe"
-          case "$FM_HOME" in /*) ;; *) echo "FALTA: FM_HOME deve ser absoluto ($FM_HOME)" >&2; fail=1 ;; esac
+          case "$FM_HOME" in
+            /*)
+              if [ ! -e "$FM_HOME" ]; then
+                echo "Corrigindo: criando raiz de benches $FM_HOME"
+                $SUDO install -d -o '{{.EXEC_USER}}' -g '{{.EXEC_USER}}' -m 755 "$FM_HOME"
+              fi
+              ;;
+            *) echo "FALTA: FM_HOME deve ser absoluto ($FM_HOME)" >&2; fail=1 ;;
+          esac
           if [ "$(id -u)" -eq 0 ]; then check runuser runuser -u '{{.EXEC_USER}}' -- true; fi
           check "FM_HOME acessível pelo dono dos benches: $FM_HOME" as_exec test -r "$FM_HOME"
           check "FM_HOME gravável pelo dono dos benches: $FM_HOME" as_exec test -w "$FM_HOME"
           check 'fmx no PATH do dono dos benches' as_exec sh -c 'command -v fmx'
+          echo "Corrigindo: preparando estado compartilhado em {{.STATE_DIR}}"
+          $SUDO install -d -o '{{.EXEC_USER}}' -g '{{.STATE_GROUP}}' -m 2770 '{{.STATE_DIR}}'
+          for db in state.db telemetria.db; do
+            database="{{.STATE_DIR}}/$db"
+            if [ ! -f "$database" ]; then
+              $SUDO install -o '{{.EXEC_USER}}' -g '{{.STATE_GROUP}}' -m 660 /dev/null "$database"
+            fi
+            $SUDO chgrp '{{.STATE_GROUP}}' "$database"
+            $SUDO chmod 660 "$database"
+            for suffix in '' -wal -shm; do
+              file="{{.STATE_DIR}}/$db$suffix"
+              if [ -f "$file" ]; then
+                $SUDO chgrp '{{.STATE_GROUP}}' "$file"
+                $SUDO chmod 660 "$file"
+              fi
+            done
+          done
+          if [ -f '{{.STATE_DIR}}/secret.key' ]; then
+            $SUDO chgrp '{{.API_USER}}' '{{.STATE_DIR}}/secret.key'
+            $SUDO chmod 640 '{{.STATE_DIR}}/secret.key'
+          fi
         fi
         runtime='{{.CONTAINER_RUNTIME}}'
         PODMAN_SOCKET='{{.PODMAN_SOCKET}}'
@@ -72,25 +121,43 @@ tasks:
         fi
         if [ "$runtime" = auto ]; then
           if command -v docker >/dev/null 2>&1 && [ -S '{{.DOCKER_SOCKET}}' ]; then runtime=docker
+          elif command -v docker >/dev/null 2>&1 && ! command -v podman >/dev/null 2>&1; then runtime=docker
           elif command -v podman >/dev/null 2>&1; then runtime=podman
           else runtime=docker; fi
         fi
         case "$runtime" in
           docker)
             check 'Docker CLI' command -v docker
+            if [ ! -S '{{.DOCKER_SOCKET}}' ] && command -v docker >/dev/null 2>&1; then
+              echo 'Corrigindo: habilitando Docker Engine'
+              if ! $SUDO systemctl enable --now docker; then
+                echo 'FALTA: Docker Engine instalado e com docker.service disponível.' >&2; fail=1
+              fi
+            fi
             check 'Docker socket {{.DOCKER_SOCKET}}' test -S '{{.DOCKER_SOCKET}}'
             ;;
           podman)
             check 'Podman CLI' command -v podman
+            if [ -n "${EXEC_UID:-}" ] && [ ! -S "$PODMAN_SOCKET" ] && command -v podman >/dev/null 2>&1; then
+              echo "Corrigindo: habilitando linger e socket rootless do Podman para {{.EXEC_USER}}"
+              if ! $SUDO loginctl enable-linger '{{.EXEC_USER}}' ||
+                 ! $SUDO systemctl start "user@$EXEC_UID.service" ||
+                 ! $SUDO runuser -u '{{.EXEC_USER}}' -- env \
+                   XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+                   DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus" \
+                   systemctl --user enable --now podman.socket; then
+                echo 'FALTA: serviço podman.socket rootless; confira o pacote Podman e o user manager.' >&2; fail=1
+              fi
+            fi
             check "Podman socket acessível por {{.EXEC_USER}}: $PODMAN_SOCKET" as_exec test -S "$PODMAN_SOCKET"
             ;;
           *) echo "FALTA: CONTAINER_RUNTIME deve ser auto, docker ou podman (atual: $runtime)" >&2; fail=1 ;;
         esac
         if [ "$fail" -ne 0 ]; then
-          echo 'Pré-flight falhou; instale/ajuste os itens acima e rode novamente.' >&2
+          echo 'Doctor não conseguiu corrigir tudo. Instale/ajuste os itens marcados e rode novamente.' >&2
           exit 1
         fi
-        echo "Pré-flight ok (runtime=$runtime; deploy systemd nativo; benches preservados)"
+        echo "Doctor ok (runtime=$runtime; contas e socket verificados; benches preservados)"
 
   install:
     desc: Instala dependências Python e web
@@ -196,11 +263,15 @@ tasks:
           echo "dono dos benches ausente: {{.EXEC_USER}} (crie antes ou ajuste EXEC_USER)" >&2
           exit 1
         fi
+        if ! getent group '{{.STATE_GROUP}}' >/dev/null 2>&1; then
+          $SUDO groupadd --system '{{.STATE_GROUP}}'
+        fi
         FM_HOME='{{.FM_HOME}}'
         if [ -z "$FM_HOME" ] && [ -t 0 ]; then
-          printf 'Caminho dos benches do Frappe-Manager [%s/frappe]: ' "$HOME" >&2
+          EXEC_HOME="$(getent passwd '{{.EXEC_USER}}' | cut -d: -f6)"
+          printf 'Caminho dos benches do Frappe-Manager [%s/frappe]: ' "$EXEC_HOME" >&2
           read -r answer || true
-          FM_HOME="${answer:-$HOME/frappe}"
+          FM_HOME="${answer:-$EXEC_HOME/frappe}"
         fi
         if [ -z "$FM_HOME" ]; then
           echo "Defina FM_HOME (ex.: FM_HOME=/home/freddo/frappe) ou rode em um TTY." >&2
@@ -210,7 +281,7 @@ tasks:
         $SUDO install -d -o root -g root -m 700 "{{.CONFIG_DIR}}"
         printf '%s\n' "$FM_HOME" | $SUDO tee "{{.CONFIG_DIR}}/fm-home" >/dev/null
         $SUDO chmod 644 "{{.CONFIG_DIR}}/fm-home"
-        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 700 "{{.STATE_DIR}}"
+        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.STATE_GROUP}}" -m 2770 "{{.STATE_DIR}}"
         $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 755 "$FM_HOME"
         echo "deploy:prereq ok (FM_HOME=$FM_HOME)"
 
@@ -302,12 +373,24 @@ tasks:
         set -eu
         SUDO=""
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        as_exec() { if [ "$(id -u)" -eq 0 ]; then runuser -u '{{.EXEC_USER}}' -- env "$@"; else sudo -u '{{.EXEC_USER}}' -H env "$@"; fi; }
         FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
         if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
-        $SUDO -u "{{.EXEC_USER}}" -H env \
+        as_exec \
           FREDDO_HOME="{{.STATE_DIR}}" \
           FREDDO_FM_HOME="$FM_HOME" \
+          sh -c 'umask 0007; exec "$@"' sh \
           "{{.INSTALL_DIR}}/.venv/bin/freddo-manager" bootstrap --fm-home "$FM_HOME" {{.CLI_ARGS}}
+        if [ -f "{{.STATE_DIR}}/secret.key" ]; then
+          $SUDO chgrp "{{.API_USER}}" "{{.STATE_DIR}}/secret.key"
+          $SUDO chmod 640 "{{.STATE_DIR}}/secret.key"
+        fi
+        for db in state.db telemetria.db; do
+          if [ -f "{{.STATE_DIR}}/$db" ]; then
+            $SUDO chgrp "{{.STATE_GROUP}}" "{{.STATE_DIR}}/$db"
+            $SUDO chmod 660 "{{.STATE_DIR}}/$db"
+          fi
+        done
 
   deploy:units:
     desc: Instala units systemd, recarrega e reinicia a stack
@@ -321,6 +404,34 @@ tasks:
         FM_HOME="$(cat '{{.CONFIG_DIR}}/fm-home')"
         $SUDO install -d -m 755 "{{.SYSTEMD_DIR}}/freddo-executor.service.d"
         printf '[Service]\nReadWritePaths=%s\n' "$FM_HOME" | $SUDO tee "{{.SYSTEMD_DIR}}/freddo-executor.service.d/20-fm-home.conf" >/dev/null
+        RUNTIME='{{.CONTAINER_RUNTIME}}'
+        if [ "$RUNTIME" = auto ]; then
+          if command -v docker >/dev/null 2>&1 && [ -S '{{.DOCKER_SOCKET}}' ]; then RUNTIME=docker
+          elif command -v podman >/dev/null 2>&1; then RUNTIME=podman
+          else RUNTIME=docker; fi
+        fi
+        if [ "$RUNTIME" = podman ]; then
+          EXEC_UID="$(id -u '{{.EXEC_USER}}')"
+          PODMAN_SOCKET='{{.PODMAN_SOCKET}}'
+          XDG_RUNTIME_DIR='{{.XDG_RUNTIME_DIR}}'
+          [ -n "$PODMAN_SOCKET" ] || PODMAN_SOCKET="/run/user/$EXEC_UID/podman/podman.sock"
+          [ -n "$XDG_RUNTIME_DIR" ] || XDG_RUNTIME_DIR="/run/user/$EXEC_UID"
+          for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
+            dropin="{{.SYSTEMD_DIR}}/$unit.d"
+            $SUDO install -d -m 755 "$dropin"
+            collector_user=''
+            collector_group=''
+            if [ "$unit" = freddo-collector.service ]; then
+              collector_user='User={{.EXEC_USER}}'
+              collector_group='Group={{.EXEC_USER}}'
+            fi
+            printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups={{.STATE_GROUP}}\n%s\n%s\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR=%s\nEnvironment=FREDDO_PODMAN_SOCKET=%s\n' "$collector_user" "$collector_group" "$XDG_RUNTIME_DIR" "$PODMAN_SOCKET" | $SUDO tee "$dropin/10-podman.conf" >/dev/null
+          done
+        else
+          for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
+            $SUDO rm -f "{{.SYSTEMD_DIR}}/$unit.d/10-podman.conf"
+          done
+        fi
         $SUDO systemctl daemon-reload
         $SUDO systemctl enable freddo.target
         $SUDO systemctl restart freddo.target
@@ -340,8 +451,13 @@ tasks:
         for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
           dropin="{{.SYSTEMD_DIR}}/$unit.d"
           $SUDO install -d -m 755 "$dropin"
-          printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups=\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR=%s\nEnvironment=FREDDO_PODMAN_SOCKET=%s\n' "$XDG_RUNTIME_DIR" "$PODMAN_SOCKET" \
-            | $SUDO tee "$dropin/10-podman.conf" >/dev/null
+          collector_user=''
+          collector_group=''
+          if [ "$unit" = freddo-collector.service ]; then
+            collector_user='User={{.EXEC_USER}}'
+            collector_group='Group={{.EXEC_USER}}'
+          fi
+          printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups={{.STATE_GROUP}}\n%s\n%s\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR=%s\nEnvironment=FREDDO_PODMAN_SOCKET=%s\n' "$collector_user" "$collector_group" "$XDG_RUNTIME_DIR" "$PODMAN_SOCKET" | $SUDO tee "$dropin/10-podman.conf" >/dev/null
         done
         $SUDO systemctl daemon-reload
         $SUDO systemctl restart freddo.target

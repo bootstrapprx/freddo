@@ -78,12 +78,15 @@ task deploy:preflight
 task deploy FM_HOME=/caminho/escolhido/frappe PUBLIC_ORIGIN=https://console.seudominio.com
 ```
 
-O pré-flight verifica systemd, Python 3.12+, Node/npm, usuário e acesso à raiz dos benches,
-`fmx` e o socket do runtime configurado (`CONTAINER_RUNTIME=auto|docker|podman`). Ele só
-valida e informa o que falta; não instala pacotes do sistema. O deploy da aplicação é nativo
-via systemd e continua operando os benches existentes pelo Frappe-Manager e Docker/Podman.
-O caminho `FM_HOME` escolhido também é aplicado ao unit do Executor, sem depender de
-`/home/freddo/frappe`.
+`task deploy:preflight` funciona como doctor: cria as contas de serviço ausentes, cria a raiz
+de benches se ela ainda não existir e habilita o daemon Docker ou o socket rootless do Podman
+quando necessário. Também ajusta o grupo/permissões dos bancos SQLite compartilhados e libera
+a chave TOTP somente para a API. Depois valida systemd, Python 3.12+, Node/npm, `fmx` e o
+acesso ao runtime configurado (`CONTAINER_RUNTIME=auto|docker|podman`). Dependências de
+aplicação ausentes, como `fmx` ou Node 22+, são apontadas com erro para evitar instalar versões
+incompatíveis. O deploy da aplicação é nativo via systemd e continua operando os benches
+existentes pelo Frappe-Manager e Docker/Podman. O caminho `FM_HOME` escolhido também é aplicado
+ao unit do Executor, sem depender de `/home/freddo/frappe`.
 
 Para bootstrap sem segundo fator, passe `--no-totp`:
 `task deploy:bootstrap -- --no-totp --force`. Para instalação manual, os passos
@@ -121,6 +124,8 @@ FREDDO_PODMAN_SOCKET=/run/user/<uid-de-freddo>/podman/podman.sock
 Remova `SupplementaryGroups=docker`, `Wants=docker.service` e `After=docker.service` dos
 units nesse host. Para um socket rootful, use `/run/podman/podman.sock` com
 `podman system service --time=0 unix:///run/podman/podman.sock` habilitado via systemd.
+No modo rootless, o deploy executa o Coletor como o dono dos benches para que ele alcance o
+socket privado do Podman; a API continua sem acesso ao runtime.
 
 Unit files de exemplo em [`deploy/`](deploy/). A API escuta apenas em `127.0.0.1`; o acesso
 externo passa por Cloudflare Tunnel + Cloudflare Access. Defina
