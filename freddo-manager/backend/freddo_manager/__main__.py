@@ -8,6 +8,7 @@ import getpass
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -135,6 +136,109 @@ def _show_runtime(settings: Settings) -> int:
     return 0
 
 
+def _bench_hostnames(settings: Settings) -> list[str]:
+    """Dominios reais dos benches existentes, sem dados sinteticos."""
+    from .fm.adapter import FmAdapter
+
+    return [str(bench["domain"]) for bench in asyncio.run(FmAdapter(settings).list_benches()) if bench.get("domain")]
+
+
+def _cloudflare_command(settings: Settings, action: str, hostname: str | None) -> int:
+    from .cloudflare import CloudflareClient, CloudflareError
+
+    try:
+        with CloudflareClient(settings) as client:
+            if action == "setup":
+                client.ensure_tunnel()
+                client.install_service()
+                hostnames = client.sync_routes(_bench_hostnames(settings))
+                print(json.dumps({"tunnel": client.state.tunnel_id, "routes": hostnames}, indent=2))
+            elif action == "status":
+                print(json.dumps(client.status(), indent=2))
+            elif action == "add":
+                if not hostname:
+                    raise CloudflareError("hostname obrigatorio")
+                client.add_route(hostname)
+                print(f"rota publicada: {hostname}")
+            elif action == "remove":
+                if not hostname:
+                    raise CloudflareError("hostname obrigatorio")
+                client.remove_route(hostname)
+                print(f"rota removida: {hostname}")
+            elif action == "sync":
+                print(json.dumps({"routes": client.sync_routes(_bench_hostnames(settings))}, indent=2))
+    except (CloudflareError, subprocess.CalledProcessError, OSError) as exc:
+        print(f"erro cloudflare: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _saas_deploy(
+    settings: Settings,
+    hostname: str,
+    apps: list[str],
+    admin_password: str | None,
+    environment: str,
+    route: bool,
+) -> int:
+    """Cria o bench/site efetivo via Executor e publica a rota no tunel."""
+    import secrets
+    import uuid
+
+    from .cloudflare import CloudflareClient, CloudflareError, _normalize_hostname
+    from .executor.allowlist import ValidationError
+    from .executor.runner import JobExecutor
+
+    try:
+        hostname = _normalize_hostname(hostname)
+    except CloudflareError as exc:
+        print(f"erro no deploy: {exc}", file=sys.stderr)
+        return 2
+    password = admin_password or secrets.token_urlsafe(12)
+    args = {
+        "bench": hostname,
+        "version": "v15",
+        "apps": apps,
+        "environment": environment,
+        "domain": hostname,
+        "admin_pass": password,
+        "alias_domains": [f"www.{hostname}"],
+    }
+    executor = JobExecutor(settings)
+
+    async def run() -> int:
+        code = 1
+        async for event in executor.run(f"cli-{uuid.uuid4().hex}", "bench.create", args):
+            if event["event"] == "line":
+                print(event["line"])
+            elif event["event"] == "error":
+                print(f"erro: {event['line']}", file=sys.stderr)
+                code = int(event.get("exit_code", 2))
+            elif event["event"] == "done":
+                code = int(event["exit_code"])
+        return code
+
+    try:
+        code = asyncio.run(run())
+    except (OSError, ValidationError) as exc:
+        print(f"erro no deploy: {exc}", file=sys.stderr)
+        return 2
+    if code != 0:
+        print("Deploy do bench falhou; nenhuma rota publicada.", file=sys.stderr)
+        return code
+    if route:
+        try:
+            with CloudflareClient(settings) as client:
+                client.ensure_tunnel()
+                client.add_route(hostname)
+        except (CloudflareError, OSError) as exc:
+            print(f"bench criado, mas falha ao publicar rota: {exc}", file=sys.stderr)
+            return 2
+    print(f"\nSite: https://{hostname}")
+    print(f"Senha admin do site (guarde agora; nao sera exibida novamente): {password}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="freddo-manager", description="Console web para Frappe-Manager")
     parser.add_argument("--version", action="version", version="freddo-manager 0.1.0")
@@ -160,6 +264,24 @@ def main() -> int:
     sub.add_parser("verify-audit", help="verifica a cadeia do audit log")
     sub.add_parser("catalog", help="mostra o mapa de comandos allowlistados")
     sub.add_parser("runtime", help="mostra o runtime de containers detectado (Docker/Podman)")
+
+    p_cf = sub.add_parser("cloudflare", help="provisiona Cloudflare Tunnel, DNS e ingress")
+    p_cf_sub = p_cf.add_subparsers(dest="cloudflare_action", required=True)
+    p_cf_sub.add_parser("setup", help="cria/recupera o tunel, instala o servico e sincroniza rotas")
+    p_cf_sub.add_parser("status", help="mostra o estado real do tunel")
+    p_cf_sub.add_parser("sync", help="ajusta rotas aos benches existentes")
+    for cf_action in ("add", "remove"):
+        p_cf_route = p_cf_sub.add_parser(cf_action, help=f"{cf_action} rota publica")
+        p_cf_route.add_argument("hostname", help="FQDN publico do site")
+
+    p_saas = sub.add_parser("saas", help="deploy de SaaS (bench + site + rota)")
+    p_saas_sub = p_saas.add_subparsers(dest="saas_action", required=True)
+    p_deploy = p_saas_sub.add_parser("deploy", help="cria bench/site e publica no Cloudflare Tunnel")
+    p_deploy.add_argument("hostname", help="FQDN publico do site (ex.: cliente.exemplo.com)")
+    p_deploy.add_argument("--apps", nargs="+", default=["erpnext"], help="apps adicionais (frappe e implicito)")
+    p_deploy.add_argument("--admin-password", help="senha admin do site (gerada e exibida se omitida)")
+    p_deploy.add_argument("--environment", default="production", help="production ou development")
+    p_deploy.add_argument("--no-route", action="store_true", help="nao publicar rota no tunel")
 
     args = parser.parse_args()
     settings = get_settings()
@@ -201,6 +323,19 @@ def main() -> int:
         return _show_catalog(settings)
     if args.command == "runtime":
         return _show_runtime(settings)
+    if args.command == "cloudflare":
+        return _cloudflare_command(settings, args.cloudflare_action, getattr(args, "hostname", None))
+    if args.command == "saas":
+        if args.saas_action == "deploy":
+            return _saas_deploy(
+                settings,
+                args.hostname,
+                args.apps,
+                args.admin_password,
+                args.environment,
+                not args.no_route,
+            )
+        return 1
     return 1
 
 

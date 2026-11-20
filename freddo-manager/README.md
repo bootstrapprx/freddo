@@ -120,9 +120,47 @@ units nesse host. Para um socket rootful, use `/run/podman/podman.sock` com
 `podman system service --time=0 unix:///run/podman/podman.sock` habilitado via systemd.
 
 Unit files de exemplo em [`deploy/`](deploy/). A API escuta apenas em `127.0.0.1`; o acesso
-externo deve passar por Cloudflare Tunnel + Cloudflare Access. Defina
+externo passa por Cloudflare Tunnel + Cloudflare Access. Defina
 `FREDDO_REQUIRE_CLOUDFLARE_JWT=1`, `FREDDO_CLOUDFLARE_ACCESS_TEAM=<team>` e
 `FREDDO_CLOUDFLARE_ACCESS_AUD=<aud>` para validar o JWT do Access além da sessão local.
+
+### Cloudflare Tunnel + deploy de SaaS
+
+O provisionamento do túnel é idempotente e usa o modo **remote-managed**: um API token da
+Cloudflare (permissões `Account > Cloudflare Tunnel: Edit` e `Zone > DNS: Edit`) cria ou
+recupera o túnel, grava o token dele em `$FREDDO_HOME/cloudflare.json` (`0600`), publica os
+CNAMEs proxied (`<tunnel-id>.cfargotunnel.com`) e a configuração de ingress no hostname
+público → `127.0.0.1:8710`. Por fim instala o serviço `cloudflared` com esse token.
+Nenhum segredo é escrito em units, `.env` ou no repositório.
+
+Pré-requisitos: `cloudflared` instalado no host, domínio com nameservers na Cloudflare e
+`FREDDO_CLOUDFLARE_API_TOKEN` / `FREDDO_CLOUDFLARE_ACCOUNT_ID` no ambiente do operador.
+
+```bash
+# cria/recupera túnel + serviço + rotas dos benches já existentes
+task deploy:cloudflare
+
+# estado real do túnel (connections, status, hostnames)
+task cloudflare:status
+
+# cria o bench E o site efetivo via Executor, depois publica a rota
+SAAS_DOMAIN=cliente.exemplo.com task saas:deploy -- --apps erpnext hrms
+
+# sincroniza rotas com os benches reais (remove rotas obsoletas)
+FREDDO_HOME=/var/lib/freddo-manager freddo-manager cloudflare sync
+```
+
+O comando `saas deploy` usa o mesmo `JobExecutor` allowlistado da API (nenhum shell) e
+imprime **uma vez** a senha administrativa gerada para o site. O nome do bench é o FQDN do
+cliente; `www.<fqdn>` é registrado como alias. O site real criado pelo `fmx` em
+`workspace/frappe-bench/sites` passa a aparecer em `sites` no `GET /api/v1/benches` —
+o painel não inventa sites: se o diretório não existe, a lista é vazia.
+
+Os papéis continuam separados: a API permanece sem acesso ao runtime; o CLI de deploy é
+executado no host como o usuário dono dos benches, usando o mesmo Executor e a mesma
+auditoria. Para proteger o console com Access além da sessão local, configure o aplicativo
+do Access para o hostname do túnel e os env `FREDDO_REQUIRE_CLOUDFLARE_JWT`,
+`FREDDO_CLOUDFLARE_ACCESS_TEAM` e `FREDDO_CLOUDFLARE_ACCESS_AUD`.
 
 ## Configuração
 
@@ -137,8 +175,12 @@ Todas as opções usam o prefixo `FREDDO_` (veja [`backend/freddo_manager/config
 | `FREDDO_DOCKER_SOCKET` | `/var/run/docker.sock` | socket do Docker |
 | `FREDDO_PODMAN_SOCKET` | detectado | socket do Podman (`XDG_RUNTIME_DIR`, `/run/user/$UID` ou `/run/podman`) |
 | `FREDDO_ENABLE_SHELL` | `0` | terminal web (desligado por padrão) |
-| `FREDDO_ARGV_MAP` | — | JSON com templates de argv do `fmx` (spike M0) |
-| `FREDDO_CATALOG` | — | JSON com `versions` e `apps` permitidos |
+| `FREDDO_CLOUDFLARE_API_TOKEN` | — | token com escopo Tunnel (Account) + DNS (Zone) |
+| `FREDDO_CLOUDFLARE_ACCOUNT_ID` | — | account ID da Cloudflare |
+| `FREDDO_CLOUDFLARE_TUNNEL_NAME` | `freddo-manager` | nome do túnel remote-managed |
+| `FREDDO_CLOUDFLARE_ORIGIN` | `http://127.0.0.1:8710` | origem local do ingress (loopback) |
+| `FREDDO_ARGV_MAP` | — | **caminho** para JSON com templates de argv do `fmx` |
+| `FREDDO_CATALOG` | — | **caminho** para JSON com `versions` e `apps` permitidos |
 | `FREDDO_ALERT_WEBHOOK_URL` | — | canal webhook/email dos alertas |
 | `FREDDO_TELEGRAM_TOKEN` / `FREDDO_TELEGRAM_CHAT` | — | canal Telegram |
 
@@ -159,6 +201,9 @@ task bootstrap -- --password 'SenhaForte!2026' --no-totp --force
 task dev                     # API + Vite (usa fmx/runtime reais)
 task runtime                 # inspeciona Docker/Podman
 task backup                  # backup consistente
+task deploy:cloudflare       # provisiona túnel + DNS + ingress + serviço
+task cloudflare:status       # estado real do túnel
+task saas:deploy SAAS_DOMAIN=cliente.exemplo.com
 ```
 
 Deploy em host Docker:
@@ -180,7 +225,8 @@ task deploy:podman \
 ```
 
 Outras tarefas: `task deploy:check`, `task deploy:env`, `task deploy:units`,
-`task deploy:status`, `task deploy:logs -- -n 100`, `task deploy:restart` e
+`task deploy:status`, `task deploy:logs -- -n 100`, `task deploy:restart`,
+`task deploy:cloudflare`, `task cloudflare:status`, `task saas:deploy` e
 `task deploy:docker` para reverter os drop-ins.
 
 ## Comandos implementados
@@ -188,7 +234,7 @@ Outras tarefas: `task deploy:check`, `task deploy:env`, `task deploy:units`,
 | fmx | Endpoint | Tipo |
 | --- | --- | --- |
 | `list` / `info` | `GET /benches`, `GET /benches/{b}` | leitura |
-| `create` / `delete` | `POST /benches`, `DELETE /benches/{b}` | job (delete exige step-up + nome) |
+| `create` / `delete` | `POST /benches`, `DELETE /benches/{b}` | job (FQDN, senha admin gerada, alias `www`; delete exige step-up + nome) |
 | `start` / `stop` / `restart` / `reset` | `POST /benches/{b}/actions/{a}` | job (mutex por bench) |
 | `update` | `PATCH /benches/{b}/config` | job (campos validados) |
 | `logs` | `GET /benches/{b}/logs` | SSE |
@@ -200,6 +246,10 @@ Outras tarefas: `task deploy:check`, `task deploy:env`, `task deploy:units`,
 | `self` | `GET /system/fm`, `POST /system/fm/update` | versão + job global |
 
 `code` (abre VS Code local) está fora de escopo, conforme a especificação.
+
+Comandos CLI de operação: `freddo-manager bootstrap`, `configure`, `serve`, `executor`,
+`collector`, `runtime`, `catalog`, `verify-audit`, `cloudflare setup|status|add|remove|sync`
+e `saas deploy <fqdn>`. O `--help` de cada subcomando documenta as opções.
 
 ## Segurança
 

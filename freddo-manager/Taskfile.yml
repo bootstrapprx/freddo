@@ -23,6 +23,8 @@ vars:
 
   PUBLIC_ORIGIN: https://console.example.com
   CORS_ORIGINS: '["https://console.example.com"]'
+  CLOUDFLARE_TUNNEL_NAME: freddo-manager
+  CLOUDFLARE_ORIGIN: http://127.0.0.1:8710
   CONTAINER_RUNTIME: auto
   DOCKER_SOCKET: /var/run/docker.sock
   PODMAN_SOCKET: /run/user/1000/podman/podman.sock
@@ -260,3 +262,39 @@ tasks:
       - task: deploy:files
       - task: deploy:env
       - task: deploy:units
+
+  deploy:cloudflare:
+    desc: Cria/recupera o tunel, instala o servico e publica as rotas reais
+    cmds:
+      - |
+        set -eu
+        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
+        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
+        FREDDO_HOME="{{.STATE_DIR}}" \
+        FREDDO_FM_HOME="{{.FM_HOME}}" \
+        FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
+        FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
+        "{{.FREDDO_BIN}}" cloudflare setup
+
+  cloudflare:status:
+    desc: Mostra o estado real do tunel (conexoes e hostnames)
+    cmds:
+      - |
+        set -eu
+        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
+        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
+        FREDDO_HOME="{{.STATE_DIR}}" "{{.FREDDO_BIN}}" cloudflare status
+
+  saas:deploy:
+    desc: Cria bench/site efetivo e publica a rota (SAAS_DOMAIN=cliente.exemplo.com)
+    cmds:
+      - |
+        set -eu
+        : "${SAAS_DOMAIN:?defina SAAS_DOMAIN com o FQDN do site}"
+        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
+        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
+        FREDDO_HOME="{{.STATE_DIR}}" \
+        FREDDO_FM_HOME="{{.FM_HOME}}" \
+        FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
+        FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
+        "{{.FREDDO_BIN}}" saas deploy "$SAAS_DOMAIN" {{.CLI_ARGS}}
