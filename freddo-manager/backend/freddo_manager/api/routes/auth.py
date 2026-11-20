@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -12,14 +14,20 @@ from ...security import (
     CSRF_COOKIE,
     SESSION_COOKIE,
     decrypt_secret,
+    encrypt_secret,
+    generate_recovery_codes,
+    generate_totp_secret,
+    hash_password,
+    hash_recovery_code,
     hash_recovery_code,
     new_csrf_token,
     new_session_token,
     verify_password,
     verify_totp,
+    totp_provisioning_uri,
 )
 from ..deps import StateDep, WriteAuth, _client_ip, verify_cloudflare_access, verify_csrf
-from ..schemas import LoginRequest, StepupRequest
+from ..schemas import BootstrapRequest, LoginRequest, StepupRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,10 +53,38 @@ async def csrf_token(state: StateDep) -> Response:
 async def setup(state: StateDep) -> dict:
     """Estado publico de bootstrap/TOTP para a tela de login (sem autenticacao)."""
     credential = await state.db.get_credential()
+    bootstrap = await state.db.get_setting("bootstrap_token")
     return {
         "bootstrap_required": credential is None,
+        "bootstrap_available": bool(bootstrap and bootstrap.get("expires_at", 0) > int(time.time())),
         "totp_required": bool(credential and credential["totp_secret_enc"]),
     }
+
+
+@router.post("/bootstrap", dependencies=[Depends(verify_csrf)])
+async def bootstrap(payload: BootstrapRequest, state: StateDep) -> Response:
+    if await state.db.get_credential() is not None:
+        raise HTTPException(status_code=409, detail="already_bootstrapped")
+    secret = generate_totp_secret()
+    codes = generate_recovery_codes()
+    consumed = await state.db.consume_bootstrap_token(
+        hashlib.sha256(payload.token.encode()).hexdigest(),
+        hash_password(payload.password),
+        encrypt_secret(secret, state.settings.secret_key_file),
+        [hash_recovery_code(code) for code in codes],
+    )
+    if not consumed:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_bootstrap_token")
+    await state.audit.record("credential.bootstrap", actor="local", target="credential")
+    return JSONResponse(
+        {
+            "ok": True,
+            "totp_secret": secret,
+            "totp_uri": totp_provisioning_uri(secret),
+            "recovery_codes": codes,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/me")

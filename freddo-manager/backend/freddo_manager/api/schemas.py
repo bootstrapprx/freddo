@@ -22,6 +22,11 @@ class LoginRequest(BaseModel):
     recovery_code: str | None = None
 
 
+class BootstrapRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=128)
+    password: str = Field(min_length=12, max_length=1024)
+
+
 class StepupRequest(BaseModel):
     totp: str | None = None
     password: str | None = None

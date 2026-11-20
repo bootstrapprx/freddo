@@ -8,7 +8,10 @@ import getpass
 import json
 import logging
 import os
+import secrets
 import sys
+import time
+import hashlib
 from pathlib import Path
 
 from .audit import AuditService
@@ -57,6 +60,7 @@ def _bootstrap(
     no_totp: bool,
     force: bool = False,
     fm_home: str | None = None,
+    setup_token: bool = False,
 ) -> int:
     _ensure_fm_home(settings, fm_home)
     db = StateDB(settings.state_db)
@@ -64,6 +68,23 @@ def _bootstrap(
     async def run() -> None:
         await db.initialize()
         existing = await db.get_credential()
+        if setup_token:
+            if existing:
+                print("Credencial ja existe; token de bootstrap nao se aplica.", file=sys.stderr)
+                raise SystemExit(1)
+            previous = await db.get_setting("bootstrap_token")
+            if previous and previous.get("expires_at", 0) > int(time.time()) and not force:
+                print("Ja existe um token de bootstrap ativo. Use --force para gerar outro.", file=sys.stderr)
+                raise SystemExit(1)
+            token = secrets.token_urlsafe(32)
+            await db.set_setting(
+                "bootstrap_token",
+                {"hash": hashlib.sha256(token.encode()).hexdigest(), "expires_at": int(time.time()) + 86400},
+            )
+            print("Token de configuracao inicial (exibido uma vez; expira em 24 horas):")
+            print(token)
+            print("Abra o Freddo local, configure a senha e registre o TOTP.")
+            return
         if existing and not force:
             print("Credencial ja existe. Use --force para substituir.", file=sys.stderr)
             raise SystemExit(1)
@@ -144,6 +165,7 @@ def main() -> int:
     p_bootstrap.add_argument("--password", help="senha (omitido para digitar com seguranca)")
     p_bootstrap.add_argument("--no-totp", action="store_true", help="nao exigir segundo fator (nao recomendado)")
     p_bootstrap.add_argument("--force", action="store_true", help="substitui a credencial existente")
+    p_bootstrap.add_argument("--setup-token", action="store_true", help="emite token de uso unico para configurar a credencial no app")
     p_bootstrap.add_argument("--fm-home", help="raiz dos benches (persistida; omitido para solicitar)")
 
     p_configure = sub.add_parser("configure", help="define/solicita a raiz dos benches")
@@ -167,7 +189,7 @@ def main() -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     if args.command == "bootstrap":
-        return _bootstrap(settings, args.password, args.no_totp, args.force, args.fm_home)
+        return _bootstrap(settings, args.password, args.no_totp, args.force, args.fm_home, args.setup_token)
     if args.command == "configure":
         _configure_fm_home(settings, args.fm_home)
         return 0

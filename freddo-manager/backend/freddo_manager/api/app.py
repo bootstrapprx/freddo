@@ -38,22 +38,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         set_app_state(state)
-        await state.initialize()
-        collector.start()
         executor_task: asyncio.Task[None] | None = None
         if settings.embed_executor:
             executor_task = asyncio.create_task(
                 run_executor(settings, install_handlers=False), name="embedded-executor"
             )
             for _ in range(40):
-                if settings.executor_socket.exists():
+                try:
+                    await state.executor.ping()
                     break
-                await asyncio.sleep(0.05)
-            try:
-                await state.executor.ping()
-                state.startup_errors = [e for e in state.startup_errors if "executor" not in e]
-            except Exception:
-                pass
+                except Exception:
+                    await asyncio.sleep(0.05)
+        await state.initialize()
+        collector.start()
         yield
         # Jobs podem ainda estar gravando eventos quando o cliente de teste (ou o
         # uvicorn) fecha o loop. Cancela e espera antes de desligar o executor.

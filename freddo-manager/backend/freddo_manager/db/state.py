@@ -7,6 +7,7 @@ O schema segue de perto a Secao 6 da especificacao. Todo acesso passa por
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import sqlite3
 import time
@@ -175,6 +176,33 @@ class StateDB:
                     json.dumps(recovery_codes or []),
                 ),
             )
+
+    async def consume_bootstrap_token(
+        self,
+        token_hash: str,
+        password_hash: str,
+        totp_secret_enc: bytes,
+        recovery_codes: list[str],
+    ) -> bool:
+        async with self.connect(write=True) as db:
+            row = await (await db.execute(
+                "SELECT value_json FROM app_setting WHERE name = 'bootstrap_token'"
+            )).fetchone()
+            credential = await (await db.execute("SELECT 1 FROM credential WHERE id = 1")).fetchone()
+            if not row or credential:
+                return False
+            token = json.loads(row["value_json"])
+            if token.get("expires_at", 0) <= int(time.time()) or not hmac.compare_digest(
+                token.get("hash", ""), token_hash
+            ):
+                return False
+            await db.execute(
+                """INSERT INTO credential (id, password_hash, totp_secret_enc, created_at, recovery_codes)
+                   VALUES (1, ?, ?, ?, ?)""",
+                (password_hash, totp_secret_enc, int(time.time()), json.dumps(recovery_codes)),
+            )
+            await db.execute("DELETE FROM app_setting WHERE name = 'bootstrap_token'")
+            return True
 
     async def create_session(
         self, id_hash: bytes, ip: str | None, user_agent: str | None

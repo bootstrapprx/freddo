@@ -210,15 +210,17 @@ tasks:
     desc: Sobe API e Vite em paralelo (fmx/runtime reais)
     env:
       FREDDO_HOME: "{{.DEV_HOME}}"
+      FREDDO_EMBED_EXECUTOR: "1"
     cmds:
-      - '{{.PYTHON}} "{{.ROOT_DIR}}/scripts/dev.py" "{{.FREDDO_BIN}}" "{{.WEB_DIR}}"'
+      - 'FREDDO_EXECUTOR_UID="$(id -u)" FREDDO_EXECUTOR_GID="$(id -g)" "{{.PYTHON}}" "{{.ROOT_DIR}}/scripts/dev.py" "{{.FREDDO_BIN}}" "{{.WEB_DIR}}"'
 
   dev:api:
     desc: Sobe apenas a API
     env:
       FREDDO_HOME: "{{.DEV_HOME}}"
+      FREDDO_EMBED_EXECUTOR: "1"
     cmds:
-      - '"{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
+      - 'FREDDO_EXECUTOR_UID="$(id -u)" FREDDO_EXECUTOR_GID="$(id -g)" "{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
 
   dev:web:
     desc: Sobe apenas o Vite
