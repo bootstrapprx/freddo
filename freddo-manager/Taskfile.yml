@@ -25,8 +25,6 @@ vars:
 
   PUBLIC_ORIGIN: https://console.example.com
   CORS_ORIGINS: '["https://console.example.com"]'
-  CLOUDFLARE_TUNNEL_NAME: freddo-manager
-  CLOUDFLARE_ORIGIN: http://127.0.0.1:8710
   CONTAINER_RUNTIME: auto
   DOCKER_SOCKET: /var/run/docker.sock
   PODMAN_SOCKET: ""
@@ -58,7 +56,7 @@ tasks:
           exit 1
         fi
         check 'Python >= 3.12' python3 -c 'import sys; assert sys.version_info >= (3,12)'
-        check 'Node.js' command -v node
+        check 'Node.js >= 22' node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'
         check 'npm (build web)' command -v npm
         for user in '{{.API_USER}}' '{{.COLLECTOR_USER}}'; do
           if ! id -u "$user" >/dev/null 2>&1; then
@@ -503,42 +501,35 @@ tasks:
       - task: deploy:bootstrap
       - task: deploy:units
 
-  deploy:cloudflare:
-    desc: Cria/recupera o tunel, instala o servico e publica as rotas reais
+  tunnel:compose:
+    desc: Opera o conector cloudflared no runtime Docker ou Podman local
     cmds:
       - |
         set -eu
-        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
-        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
-        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
-        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
-        FREDDO_HOME="{{.STATE_DIR}}" \
-        FREDDO_FM_HOME="$FM_HOME" \
-        FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
-        FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
-        "{{.FREDDO_BIN}}" cloudflare setup
-
-  cloudflare:status:
-    desc: Mostra o estado real do tunel (conexoes e hostnames)
-    cmds:
-      - |
-        set -eu
-        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
-        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
-        FREDDO_HOME="{{.STATE_DIR}}" "{{.FREDDO_BIN}}" cloudflare status
+        runtime='{{.CONTAINER_RUNTIME}}'
+        if [ "$runtime" = auto ]; then
+          if command -v docker >/dev/null 2>&1 && [ -S '{{.DOCKER_SOCKET}}' ]; then runtime=docker
+          elif command -v podman >/dev/null 2>&1; then runtime=podman
+          else runtime=docker; fi
+        fi
+        case "$runtime" in
+          docker) docker compose --env-file "{{.ROOT_DIR}}/.env" -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
+          podman) podman compose --env-file "{{.ROOT_DIR}}/.env" -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
+          *) echo "CONTAINER_RUNTIME deve ser auto, docker ou podman (atual: $runtime)" >&2; exit 2 ;;
+        esac
 
   saas:deploy:
-    desc: Cria bench/site efetivo e publica a rota (SAAS_DOMAIN=cliente.exemplo.com)
+    desc: Cria bench/site e inicia o conector local (SAAS_DOMAIN=cliente.exemplo.com)
     cmds:
       - |
         set -eu
         : "${SAAS_DOMAIN:?defina SAAS_DOMAIN com o FQDN do site}"
-        : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
-        : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
         FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
         if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
         FREDDO_HOME="{{.STATE_DIR}}" \
         FREDDO_FM_HOME="$FM_HOME" \
-        FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
-        FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
         "{{.FREDDO_BIN}}" saas deploy "$SAAS_DOMAIN" {{.CLI_ARGS}}
+        if ! task tunnel:compose -- up -d; then
+          echo "Bench criado em $SAAS_DOMAIN, mas o conector não iniciou; verifique o token e a rede fm-global-frontend-network." >&2
+          exit 1
+        fi

@@ -134,52 +134,29 @@ externo passa por Cloudflare Tunnel + Cloudflare Access. Defina
 
 ### Cloudflare Tunnel + deploy de SaaS
 
-O provisionamento do túnel é idempotente e usa o modo **remote-managed**: um API token da
-Cloudflare (permissões `Account > Cloudflare Tunnel: Edit` e `Zone > DNS: Edit`) cria ou
-recupera o túnel, grava o token dele em `$FREDDO_HOME/cloudflare.json` (`0600`), publica os
-CNAMEs proxied (`<tunnel-id>.cfargotunnel.com`) e a configuração de ingress no hostname
-público → `127.0.0.1:8710`. Por fim instala o serviço `cloudflared` com esse token.
-Nenhum segredo é escrito em units, `.env` ou no repositório.
+Freddo é local: cria o bench/site com o FQDN público escolhido pelo operador e orquestra
+o container oficial `cloudflared` via Compose. Não cria túneis, DNS ou ingress pela API.
+Configure o tunnel remote-managed e seus hostnames públicos no painel Cloudflare; para cada
+hostname, a origem deve ser `http://global-nginx-proxy:80`. O proxy compartilhado do
+Frappe-Manager direciona o hostname ao bench correspondente.
 
-Pré-requisitos: `cloudflared` instalado no host, domínio com nameservers na Cloudflare e
-`FREDDO_CLOUDFLARE_API_TOKEN` / `FREDDO_CLOUDFLARE_ACCOUNT_ID` no ambiente do operador.
-O conector só faz conexões **saentes** (TCP/7844); não é preciso abrir portas no firewall.
-
-No servidor Debian (esta estação é apenas a estação de trabalho):
+Copie `.env.example` para `.env` e preencha `CLOUDFLARE_TUNNEL_TOKEN` com o token do túnel.
+Depois de criar o primeiro bench (que cria a rede externa `fm-global-frontend-network`), rode:
 
 ```bash
-# amd64; para outras arquiteturas troque por arm64/arm/386
-curl -fsSLO https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-sudo apt-get install -y ./cloudflared-linux-amd64.deb
-cloudflared --version
-```
-
-```bash
-# cria/recupera túnel + serviço + rotas dos benches já existentes
-task deploy:cloudflare
-
-# estado real do túnel (connections, status, hostnames)
-task cloudflare:status
-
-# cria o bench E o site efetivo via Executor, depois publica a rota
 SAAS_DOMAIN=cliente.exemplo.com task saas:deploy -- --apps erpnext hrms
-
-# sincroniza rotas com os benches reais (remove rotas obsoletas)
-FREDDO_HOME=/var/lib/freddo-manager freddo-manager cloudflare sync
+# Operar o container manualmente quando necessário:
+task tunnel:compose -- logs -f
+task tunnel:compose -- down
 ```
 
-O comando `saas deploy` usa o mesmo `JobExecutor` allowlistado da API (nenhum shell) e
-imprime **uma vez** a senha administrativa gerada para o site. O nome do bench é o FQDN do
-cliente; `www.<fqdn>` é registrado como alias. O site real criado pelo `fmx` em
-`workspace/frappe-bench/sites` passa a aparecer em `sites` no `GET /api/v1/benches` —
-o painel não inventa sites: se o diretório não existe, a lista é vazia.
-
-Os papéis continuam separados: a API permanece sem acesso ao runtime; o CLI de deploy é
-executado no host como o usuário dono dos benches, usando o mesmo Executor e a mesma
-auditoria. O túnel termina TLS na Cloudflare, então a origem é HTTP em loopback — não é
-necessário emitir certificado Let's Encrypt com `fmx ssl add` nesse cenário.
-Para proteger o console com Access além da sessão local, configure o aplicativo
-do Access para o hostname do túnel e os env `FREDDO_REQUIRE_CLOUDFLARE_JWT`,
+`saas:deploy` primeiro usa o `JobExecutor` allowlistado para criar o bench/site; depois
+conecta `cloudflared` à rede externa. A senha administrativa gerada é exibida uma vez.
+O nome do bench é o FQDN do cliente e `www.<fqdn>` é registrado como alias. O túnel deve
+estar configurado no painel Cloudflare para encaminhar os hostnames ao proxy compartilhado.
+`CONTAINER_RUNTIME=auto|docker|podman` seleciona o runtime local; em Podman, `podman compose`
+requer um provider Compose instalado. Para o console, Cloudflare Access JWT continua sendo
+validado separadamente pelas opções `FREDDO_REQUIRE_CLOUDFLARE_JWT`,
 `FREDDO_CLOUDFLARE_ACCESS_TEAM` e `FREDDO_CLOUDFLARE_ACCESS_AUD`.
 
 ## Configuração
@@ -195,10 +172,6 @@ Todas as opções usam o prefixo `FREDDO_` (veja [`backend/freddo_manager/config
 | `FREDDO_DOCKER_SOCKET` | `/var/run/docker.sock` | socket do Docker |
 | `FREDDO_PODMAN_SOCKET` | detectado | socket do Podman (`XDG_RUNTIME_DIR`, `/run/user/$UID` ou `/run/podman`) |
 | `FREDDO_ENABLE_SHELL` | `0` | terminal web (desligado por padrão) |
-| `FREDDO_CLOUDFLARE_API_TOKEN` | — | token com escopo Tunnel (Account) + DNS (Zone) |
-| `FREDDO_CLOUDFLARE_ACCOUNT_ID` | — | account ID da Cloudflare |
-| `FREDDO_CLOUDFLARE_TUNNEL_NAME` | `freddo-manager` | nome do túnel remote-managed |
-| `FREDDO_CLOUDFLARE_ORIGIN` | `http://127.0.0.1:8710` | origem local do ingress (loopback) |
 | `FREDDO_ARGV_MAP` | — | **caminho** para JSON com templates de argv do `fmx` |
 | `FREDDO_CATALOG` | — | **caminho** para JSON com `versions` e `apps` permitidos |
 | `FREDDO_ALERT_WEBHOOK_URL` | — | canal webhook/email dos alertas |
@@ -221,8 +194,7 @@ task bootstrap -- --password 'SenhaForte!2026' --no-totp --force
 task dev                     # API + Vite (usa fmx/runtime reais)
 task runtime                 # inspeciona Docker/Podman
 task backup                  # backup consistente
-task deploy:cloudflare       # provisiona túnel + DNS + ingress + serviço
-task cloudflare:status       # estado real do túnel
+task tunnel:compose -- ps    # estado do conector local
 task saas:deploy SAAS_DOMAIN=cliente.exemplo.com
 ```
 
@@ -249,10 +221,10 @@ task deploy:podman \
   XDG_RUNTIME_DIR=/run/user/1000
 ```
 
-Outras tarefas: `task deploy:prereq`, `task deploy:check`, `task deploy:env`,
+Outras tarefas: `task deploy:preflight`, `task deploy:prereq`, `task deploy:check`, `task deploy:env`,
 `task deploy:bootstrap`, `task deploy:units`,
 `task deploy:status`, `task deploy:logs -- -n 100`, `task deploy:restart`,
-`task deploy:cloudflare`, `task cloudflare:status`, `task saas:deploy` e
+`task tunnel:compose -- <args>`, `task saas:deploy` e
 `task deploy:docker` para reverter os drop-ins.
 
 ## Comandos implementados
@@ -274,8 +246,8 @@ Outras tarefas: `task deploy:prereq`, `task deploy:check`, `task deploy:env`,
 `code` (abre VS Code local) está fora de escopo, conforme a especificação.
 
 Comandos CLI de operação: `freddo-manager bootstrap`, `configure`, `serve`, `executor`,
-`collector`, `runtime`, `catalog`, `verify-audit`, `cloudflare setup|status|add|remove|sync`
-e `saas deploy <fqdn>`. O `--help` de cada subcomando documenta as opções.
+`collector`, `runtime`, `catalog`, `verify-audit` e `saas deploy <fqdn>`. O `--help` de cada
+subcomando documenta as opções.
 
 ## Segurança
 

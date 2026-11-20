@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -99,12 +98,6 @@ class Settings(BaseSettings):
     cloudflare_access_aud: str | None = None
     require_cloudflare_jwt: bool = False
 
-    # Cloudflare Tunnel (modo remote-managed via API token)
-    cloudflare_api_token: str | None = None
-    cloudflare_account_id: str | None = None
-    cloudflare_tunnel_name: str = "freddo-manager"
-    cloudflare_origin: str = "http://127.0.0.1:8710"
-
     # Execucao
     embed_executor: bool = True  # desenvolvimento: sobe o executor junto com a API
     executor_uid: int | None = None
@@ -139,14 +132,6 @@ class Settings(BaseSettings):
     rollup5m_retention_days: int = 30
     rollup1h_retention_days: int = 400
     enable_shell: bool = False
-
-    @field_validator("cloudflare_origin")
-    @classmethod
-    def _valid_origin(cls, value: str) -> str:
-        value = value.rstrip("/")
-        if not re.fullmatch(r"https?://(?:127\.0\.0\.1|localhost|\[::1\]):\d{2,5}", value):
-            raise ValueError("cloudflare_origin deve ser http://127.0.0.1:<porta> (origem loopback)")
-        return value
 
     @field_validator(
         "home",
