@@ -51,7 +51,13 @@ def test_destructive_requires_confirmation() -> None:
 
 def test_bench_create_expands_apps() -> None:
     op = Allowlist("fmx").build(
-        "bench.create", {"bench": "teste", "apps": ["erpnext"], "environment": "production"}
+        "bench.create",
+        {
+            "bench": "teste",
+            "apps": ["erpnext"],
+            "environment": "production",
+            "admin_pass": "SenhaForte!2026",
+        },
     )
     assert op.argv == [
         "fmx",
@@ -60,11 +66,36 @@ def test_bench_create_expands_apps() -> None:
         "teste",
         "--environment",
         "prod",
+        "--admin-pass",
+        "SenhaForte!2026",
         "--apps",
         "frappe",
         "--apps",
         "erpnext",
     ]
+
+
+def test_saas_fqdn_and_alias_domains_are_allowed() -> None:
+    op = Allowlist("fmx").build(
+        "bench.create",
+        {
+            "bench": "cliente.exemplo.com",
+            "apps": ["erpnext"],
+            "environment": "prod",
+            "admin_pass": "SenhaForte!2026",
+            "alias_domains": ["www.cliente.exemplo.com"],
+        },
+    )
+    assert op.bench == "cliente.exemplo.com"
+    assert op.argv[3] == "cliente.exemplo.com"
+    assert "--alias-domains" in op.argv
+    assert "www.cliente.exemplo.com" in op.argv
+
+    with pytest.raises(ValidationError):
+        Allowlist("fmx").build(
+            "bench.create",
+            {"bench": "cliente.exemplo.com", "admin_pass": "SenhaForte!2026", "alias_domains": ["ruim"]},
+        )
 
 
 def test_password_totp_and_redaction(tmp_path) -> None:
@@ -78,6 +109,7 @@ def test_password_totp_and_redaction(tmp_path) -> None:
     line = "mysql password: supersecreto token=abc123"
     redacted = redact(line)
     assert "supersecreto" not in redacted and "abc123" not in redacted
+    assert "SenhaForte!2026" not in redact("fmx create --admin-pass SenhaForte!2026")
 
 
 def test_audit_chain(tmp_path) -> None:

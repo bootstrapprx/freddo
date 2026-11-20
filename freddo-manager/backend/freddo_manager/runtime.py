@@ -237,6 +237,8 @@ class ContainerCompat:
 
     def env(self, base: dict[str, str] | None = None) -> dict[str, str]:
         env = dict(base if base is not None else os.environ)
+        # fmx 0.20 usa FRAPPE_MANAGER_HOME para localizar a raiz dos benches.
+        env["FRAPPE_MANAGER_HOME"] = str(self.settings.fm_home)
         if self.runtime.kind != "podman":
             return env
         if self.runtime.socket is not None:

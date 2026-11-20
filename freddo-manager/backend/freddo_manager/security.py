@@ -27,6 +27,7 @@ CSRF_HEADER = "x-csrf-token"
 # Padroes que nunca devem chegar ao banco de jobs ou aos logs (S9).
 _REDACTORS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?([^\s'\"]+)"), r"\1=***REDACTED***"),
+    (re.compile(r"(?i)--(admin-pass|github-token|auth-token)(\s+)([^\s]+)"), r"--\1\2***REDACTED***"),
     (re.compile(r"(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL), "[PRIVATE KEY]"),
     (re.compile(r"\b(?:ghp|gho|github_pat)_[A-Za-z0-9_]{20,}\b"), "[TOKEN]"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"), "[JWT]"),

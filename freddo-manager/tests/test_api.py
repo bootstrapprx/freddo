@@ -56,6 +56,7 @@ def test_benches_and_jobs(client: TestClient) -> None:
         headers={"x-csrf-token": csrf},
     )
     assert created.status_code == 202, created.text
+    assert len(created.json()["admin_password"]) >= 8
     job = wait_job(client, created.json()["id"])
     assert job["state"] == "succeeded", job
     assert any("compose pull" in event["line"] for event in job["events"])

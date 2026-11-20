@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -51,19 +52,31 @@ async def create_bench(payload: CreateBenchRequest, state: StateDep) -> JobRespo
         if not template:
             raise HTTPException(status_code=404, detail="template_not_found")
         spec = json.loads(template["spec_json"])
+    admin_password = payload.admin_password or secrets.token_urlsafe(12)
     args = {
         "bench": payload.name,
         "version": payload.version,
         "apps": payload.apps,
         "environment": payload.environment,
         "domain": payload.domain,
+        "admin_pass": admin_password,
+        "alias_domains": [f"www.{payload.name}"] if "." in payload.name else [],
         **spec,
     }
     job_id, created = await state.jobs.submit(
         "bench.create", args, bench=payload.name, idempotency_key=payload.idempotency_key
     )
-    await state.audit.record("bench.create", target=payload.name, detail=args)
-    return JobResponse(id=job_id, kind="bench.create", bench=payload.name, state="queued", created_at=0, created_now=created)
+    audit_detail = {key: value for key, value in args.items() if key != "admin_pass"}
+    await state.audit.record("bench.create", target=payload.name, detail=audit_detail)
+    return JobResponse(
+        id=job_id,
+        kind="bench.create",
+        bench=payload.name,
+        state="queued",
+        created_at=0,
+        created_now=created,
+        admin_password=admin_password if created else None,
+    )
 
 
 @router.delete("/{bench}", status_code=202, dependencies=[Depends(verify_csrf)])

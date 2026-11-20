@@ -14,7 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-BENCH_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+# Um bench de SaaS é identificado pelo FQDN do site (ex.: tenant.example.com).
+# Nomes de uma única label continuam aceitos para benches locais legados.
+BENCH_RE = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+DOMAIN_RE = re.compile(
+    r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
 SERVICE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 DEFAULT_CATALOG: dict[str, Any] = {
@@ -49,7 +58,10 @@ DEFAULT_ARGV_MAP: dict[str, list[str]] = {
     "fm.list": ["{fm}", "-n", "list"],
     "fm.info": ["{fm}", "-n", "info", "{bench}"],
     "fm.version": ["{fm}", "--version"],
-    "bench.create": ["{fm}", "-n", "create", "{bench}", "--environment", "{environment}", "{apps}"],
+    "bench.create": [
+        "{fm}", "-n", "create", "{bench}", "--environment", "{environment}",
+        "--admin-pass", "{admin_pass}", "{aliases}", "{apps}",
+    ],
     "bench.delete": ["{fm}", "-n", "delete", "{bench}", "--yes"],
     "bench.start": ["{fm}", "-n", "start", "{bench}"],
     "bench.stop": ["{fm}", "-n", "stop", "{bench}"],
@@ -58,7 +70,7 @@ DEFAULT_ARGV_MAP: dict[str, list[str]] = {
     "bench.update": ["{fm}", "-n", "update", "{bench}", "--environment", "{environment}"],
     "bench.logs": ["{fm}", "-n", "logs", "{bench}", "--service", "{service}", "--follow"],
     "ssl.status": ["{fm}", "-n", "ssl", "list"],
-    "ssl.issue": ["{fm}", "-n", "ssl", "add", "{bench}"],
+    "ssl.issue": ["{fm}", "-n", "ssl", "add", "{bench}", "{domain}"],
     "ssl.renew": ["{fm}", "-n", "ssl", "renew", "{bench}"],
     "ngrok.start": ["{fm}", "-n", "ngrok", "{bench}"],
     "ngrok.stop": ["{fm}", "-n", "ngrok", "{bench}"],
@@ -128,7 +140,21 @@ class Allowlist:
                 apps = ["frappe", *apps]
             app_list = list(apps)
             environment = "prod" if str(args.get("environment", "development")).lower() in ("production", "prod") else "dev"
-            args = {**args, "version": version, "environment": environment}
+            admin_pass = args.get("admin_pass") or "admin"
+            if not isinstance(admin_pass, str) or len(admin_pass) < 8:
+                raise ValidationError("senha administrativa deve ter ao menos 8 caracteres")
+            aliases = args.get("alias_domains") or []
+            if isinstance(aliases, str):
+                aliases = [item.strip() for item in aliases.split(",") if item.strip()]
+            if not isinstance(aliases, list) or any(not DOMAIN_RE.fullmatch(str(item)) for item in aliases):
+                raise ValidationError("alias domains invalidos")
+            args = {
+                **args,
+                "version": version,
+                "environment": environment,
+                "admin_pass": admin_pass,
+                "alias_domains": list(aliases),
+            }
         if op == "bench.update":
             config = args.get("config", {})
             if not isinstance(config, dict):
@@ -139,9 +165,10 @@ class Allowlist:
             environment = "prod" if str(config.get("environment", "development")).lower() in ("production", "prod") else "dev"
             args = {**args, "environment": environment}
         if op == "ssl.issue":
-            domain = args.get("domain", "")
-            if not re.fullmatch(r"(?=.{4,253}$)[a-z0-9-]+(\.[a-z0-9-]+)+", str(domain)):
+            domain = args.get("domain") or bench or ""
+            if not DOMAIN_RE.fullmatch(str(domain)):
                 raise ValidationError("dominio invalido")
+            args = {**args, "domain": str(domain)}
         ttl: int | None = None
         if op == "ngrok.start":
             ttl = int(args.get("ttl", 3600))
@@ -163,7 +190,7 @@ class Allowlist:
 
         placeholders = set(re.findall(r"\{(\w+)\}", " ".join(self.argv_map[op])))
         vars_: dict[str, str] = {"fm": self.fm_bin, **{k: str(v) for k, v in args.items()}}
-        missing = placeholders - set(vars_)
+        missing = placeholders - set(vars_) - {"aliases"}
         if missing:
             raise ValidationError(f"argumentos ausentes: {', '.join(sorted(missing))}")
         argv: list[str] = []
@@ -171,6 +198,10 @@ class Allowlist:
             if template == "{apps}":
                 for app in app_list:
                     argv.extend(["--apps", app])
+            elif template == "{aliases}":
+                aliases = args.get("alias_domains") or []
+                if aliases:
+                    argv.extend(["--alias-domains", ",".join(str(item) for item in aliases)])
             else:
                 argv.append(template.format(**vars_))
         if any("\n" in part or "\x00" in part for part in argv):

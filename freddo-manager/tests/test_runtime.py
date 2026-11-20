@@ -38,6 +38,7 @@ def test_podman_creates_docker_shim_and_remote_env(tmp_path: Path, monkeypatch: 
     assert env["PATH"].startswith(str(settings.home / "runtime-bin"))
     assert env["CONTAINER_HOST"] == f"unix://{socket}"
     assert env["DOCKER_HOST"] == f"unix://{socket}"
+    assert env["FRAPPE_MANAGER_HOME"] == str(settings.fm_home)
 
 
 def test_auto_prefers_docker_when_socket_is_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

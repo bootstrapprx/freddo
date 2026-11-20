@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 from ..config import Settings
@@ -91,8 +92,11 @@ class FmAdapter:
         text = await self._run(allowlist.argv)
         parsed = self._parse_possibly_json(text)
         if isinstance(parsed, dict):
+            if not parsed.get("sites"):
+                parsed["sites"] = _sites_from_disk(self.settings.fm_home / name, parsed.get("domain"))
+            parsed["site_ready"] = bool(parsed["sites"])
             return parsed
-        return {"bench": name, "raw": str(parsed or "")[:8000]}
+        return {"bench": name, "sites": [], "site_ready": False, "raw": str(parsed or "")[:8000]}
 
     async def services(self) -> list[dict[str, Any]]:
         text = await self._run(self.compat.argv("ps", "--format", "json"))
@@ -150,6 +154,7 @@ class FmAdapter:
                     config = json.loads(config_file.read_text())
                 except (OSError, json.JSONDecodeError):
                     config = {}
+            domain = _compose_label(labels, "frappe.domain") or config.get("domain")
             benches.append(
                 {
                     "name": compose_project(labels) or entry.name,
@@ -158,15 +163,28 @@ class FmAdapter:
                     "apps": (_compose_label(labels, "frappe.apps") or "").split(",")
                     if _compose_label(labels, "frappe.apps")
                     else [],
-                    "domain": _compose_label(labels, "frappe.domain") or config.get("domain"),
+                    "domain": domain,
                     "environment": _compose_label(labels, "frappe.environment", "development"),
                     "services": [],
-                    "sites": [],
+                    "sites": _sites_from_disk(entry, domain),
                     "created_at": int(entry.stat().st_mtime),
                     "path": str(entry),
                 }
             )
         return benches
+
+
+def _sites_from_disk(bench_dir: Path, domain: str | None) -> list[str]:
+    """Sites efetivos criados pelo fmx, lidos de `workspace/frappe-bench/sites`."""
+    sites_root = bench_dir / "workspace" / "frappe-bench" / "sites"
+    sites: list[str] = []
+    if sites_root.is_dir():
+        for candidate in sorted(sites_root.iterdir()):
+            if candidate.is_dir() and (candidate / "site_config.json").is_file():
+                sites.append(candidate.name)
+    if not sites and domain:
+        return [str(domain)]
+    return sites
 
 
 def _compose_label(labels: dict[str, str], key: str, default: str = "") -> str:

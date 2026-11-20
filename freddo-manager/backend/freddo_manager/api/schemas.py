@@ -44,6 +44,7 @@ class CreateBenchRequest(BaseModel):
     template: str | None = None
     environment: str = "development"
     domain: str | None = None
+    admin_password: str | None = Field(default=None, min_length=8)
     idempotency_key: str | None = None
 
     @field_validator("name")
@@ -121,6 +122,7 @@ class JobResponse(BaseModel):
     exit_code: int | None = None
     error: str | None = None
     created_now: bool = True
+    admin_password: str | None = None
 
 
 def job_to_dict(row: Any) -> dict[str, Any]:
