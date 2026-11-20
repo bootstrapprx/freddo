@@ -152,7 +152,7 @@ class ExecutorServer:
         job_id = str(message.get("job_id", ""))
         op = str(message.get("op", ""))
         args = message.get("args") or {}
-        if not job_id or not op.startswith(("bench.", "ssl.", "ngrok.", "services.", "fm.")):
+        if not job_id or not op.startswith(("bench.", "ssl.", "ngrok.", "services.", "fm.", "tunnel.")):
             await write_message(writer, {"id": request_id, "type": "error", "payload": "invalid_job"})
             return
         try:

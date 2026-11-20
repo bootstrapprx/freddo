@@ -7,6 +7,7 @@ import { Alerts } from "@/pages/Alerts";
 import { Audit } from "@/pages/Audit";
 import { Benches } from "@/pages/Benches";
 import { Dashboard } from "@/pages/Dashboard";
+import { Deployment } from "@/pages/Deployment";
 import { Jobs } from "@/pages/Jobs";
 import { Login } from "@/pages/Login";
 import { System } from "@/pages/System";
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<Protected />}>
           <Route index element={<Dashboard />} />
+          <Route path="deployment" element={<Deployment />} />
           <Route path="benches" element={<Benches />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="telemetry" element={<Telemetry />} />

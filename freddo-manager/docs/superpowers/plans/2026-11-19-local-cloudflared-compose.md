@@ -1,5 +1,9 @@
 # Local cloudflared Compose Implementation Plan
 
+> This plan records the initial local Compose implementation. The in-app configuration,
+> site-domain binding, and private-manager design are specified in
+> [`2026-11-20-in-app-domain-bound-deploy-design.md`](../specs/2026-11-20-in-app-domain-bound-deploy-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Freddo locally deploys sites at operator-supplied FQDNs and orchestrates one Cloudflare Tunnel connector container without provisioning Cloudflare resources.

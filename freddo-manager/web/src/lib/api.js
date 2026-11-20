@@ -102,6 +102,13 @@ export const endpoints = {
   fmAction: (kind, backupConfirmed) =>
     api(`/system/fm/${kind}`, { method: "POST", body: { backup_confirmed: backupConfirmed, confirm: "system" } }),
   system: () => api("/system"),
+  deploymentConfig: () => api("/deployment/config"),
+  saveDeploymentDomains: (domains) => api("/deployment/domains", { method: "PUT", body: { domains } }),
+  setTunnelToken: (token) => api("/deployment/tunnel-token", { method: "PUT", body: { token } }),
+  deleteTunnelToken: () => api("/deployment/tunnel-token", { method: "DELETE" }),
+  connectTunnel: () => api("/deployment/tunnel/connect", { method: "POST", body: {} }),
+  disconnectTunnel: () => api("/deployment/tunnel/disconnect", { method: "POST", body: {} }),
+  createSite: (data) => api("/deployment/sites", { method: "POST", body: data }),
   authSetup: () => api("/auth/setup"),
   login: (data) => api("/auth/login", { method: "POST", body: data }),
   logout: () => api("/auth/logout", { method: "POST" }),

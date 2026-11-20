@@ -3,8 +3,8 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    env_file:
+      - "${FREDDO_HOME:?FREDDO_HOME is required}/cloudflared/cloudflared.env"
     networks:
       - frappe-manager-frontend
 

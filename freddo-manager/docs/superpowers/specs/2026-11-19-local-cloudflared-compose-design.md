@@ -1,5 +1,8 @@
 # Local cloudflared Compose design
 
+> Superseded for the in-app configuration and domain binding by
+> [`2026-11-20-in-app-domain-bound-deploy-design.md`](2026-11-20-in-app-domain-bound-deploy-design.md).
+
 ## Intent
 
 Freddo is a local deployer/orchestrator. It should start the `cloudflared` container

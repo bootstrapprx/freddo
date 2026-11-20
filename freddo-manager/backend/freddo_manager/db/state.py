@@ -1,4 +1,4 @@
-"""Banco de estado: credenciais, sessoes, jobs, auditoria, templates e alertas.
+"""Banco de estado: credenciais, sessoes, jobs, auditoria, settings e alertas.
 
 O schema segue de perto a Secao 6 da especificacao. Todo acesso passa por
 ``StateDB``; as conexoes usam WAL para nao bloquear leituras durante escritas.
@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS bench_template (
   spec_json TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS app_setting (
+  name TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alert_rule (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -122,6 +126,10 @@ class StateDB:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA foreign_keys=ON")
             await db.executescript(SCHEMA)
+            await db.execute(
+                "INSERT OR IGNORE INTO app_setting (name, value_json) VALUES (?, ?)",
+                ("deployment_domains", json.dumps(["kodoo.online", "kalkulisto.com.br"])),
+            )
             await db.commit()
 
     @asynccontextmanager
@@ -281,6 +289,19 @@ class StateDB:
             return ids
 
     # ---- templates / alerts / audit ------------------------------------------
+    async def get_setting(self, name: str, default: Any = None) -> Any:
+        async with self.connect() as db:
+            row = await (await db.execute("SELECT value_json FROM app_setting WHERE name = ?", (name,))).fetchone()
+        return json.loads(row["value_json"]) if row else default
+
+    async def set_setting(self, name: str, value: Any) -> None:
+        async with self.connect(write=True) as db:
+            await db.execute(
+                "INSERT INTO app_setting (name, value_json) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET value_json = excluded.value_json",
+                (name, json.dumps(value, sort_keys=True)),
+            )
+
     async def list_templates(self) -> list[sqlite3.Row]:
         async with self.connect() as db:
             return list(await (await db.execute("SELECT * FROM bench_template ORDER BY name")).fetchall())

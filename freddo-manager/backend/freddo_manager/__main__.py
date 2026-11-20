@@ -135,64 +135,6 @@ def _show_runtime(settings: Settings) -> int:
     return 0
 
 
-def _saas_deploy(
-    settings: Settings,
-    hostname: str,
-    apps: list[str],
-    admin_password: str | None,
-    environment: str,
-) -> int:
-    """Cria o bench/site efetivo via Executor para um FQDN publico."""
-    import secrets
-    import uuid
-
-    from .executor.allowlist import DOMAIN_RE, ValidationError
-    from .executor.runner import JobExecutor
-
-    try:
-        hostname = hostname.strip().lower().rstrip(".")
-        if not DOMAIN_RE.fullmatch(hostname):
-            raise ValidationError("informe um FQDN publico valido")
-    except ValidationError as exc:
-        print(f"erro no deploy: {exc}", file=sys.stderr)
-        return 2
-    password = admin_password or secrets.token_urlsafe(12)
-    args = {
-        "bench": hostname,
-        "version": "v15",
-        "apps": apps,
-        "environment": environment,
-        "domain": hostname,
-        "admin_pass": password,
-        "alias_domains": [f"www.{hostname}"],
-    }
-    executor = JobExecutor(settings)
-
-    async def run() -> int:
-        code = 1
-        async for event in executor.run(f"cli-{uuid.uuid4().hex}", "bench.create", args):
-            if event["event"] == "line":
-                print(event["line"])
-            elif event["event"] == "error":
-                print(f"erro: {event['line']}", file=sys.stderr)
-                code = int(event.get("exit_code", 2))
-            elif event["event"] == "done":
-                code = int(event["exit_code"])
-        return code
-
-    try:
-        code = asyncio.run(run())
-    except (OSError, ValidationError) as exc:
-        print(f"erro no deploy: {exc}", file=sys.stderr)
-        return 2
-    if code != 0:
-        print("Deploy do bench falhou; nenhuma rota publicada.", file=sys.stderr)
-        return code
-    print(f"\nSite: https://{hostname}")
-    print(f"Senha admin do site (guarde agora; nao sera exibida novamente): {password}")
-    return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(prog="freddo-manager", description="Console web para Frappe-Manager")
     parser.add_argument("--version", action="version", version="freddo-manager 0.1.0")
@@ -218,14 +160,6 @@ def main() -> int:
     sub.add_parser("verify-audit", help="verifica a cadeia do audit log")
     sub.add_parser("catalog", help="mostra o mapa de comandos allowlistados")
     sub.add_parser("runtime", help="mostra o runtime de containers detectado (Docker/Podman)")
-
-    p_saas = sub.add_parser("saas", help="deploy de SaaS (bench + site)")
-    p_saas_sub = p_saas.add_subparsers(dest="saas_action", required=True)
-    p_deploy = p_saas_sub.add_parser("deploy", help="cria bench/site no FQDN publico")
-    p_deploy.add_argument("hostname", help="FQDN publico do site (ex.: cliente.exemplo.com)")
-    p_deploy.add_argument("--apps", nargs="+", default=["erpnext"], help="apps adicionais (frappe e implicito)")
-    p_deploy.add_argument("--admin-password", help="senha admin do site (gerada e exibida se omitida)")
-    p_deploy.add_argument("--environment", default="production", help="production ou development")
 
     args = parser.parse_args()
     settings = get_settings()
@@ -267,16 +201,6 @@ def main() -> int:
         return _show_catalog(settings)
     if args.command == "runtime":
         return _show_runtime(settings)
-    if args.command == "saas":
-        if args.saas_action == "deploy":
-            return _saas_deploy(
-                settings,
-                args.hostname,
-                args.apps,
-                args.admin_password,
-                args.environment,
-            )
-        return 1
     return 1
 
 

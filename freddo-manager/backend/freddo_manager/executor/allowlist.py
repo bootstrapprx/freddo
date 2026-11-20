@@ -50,7 +50,9 @@ DESTRUCTIVE_OPS = {
     "fm.self.update",
 }
 
-GLOBAL_OPS = {"services.start", "services.stop", "services.restart", "fm.migrate", "fm.self.update"}
+GLOBAL_OPS = {
+    "services.start", "services.stop", "services.restart", "fm.migrate", "fm.self.update", "tunnel.up", "tunnel.down"
+}
 
 # Sintaxe real do Frappe-Manager 0.20 (entrypoint fmx, flag global -n).
 # Mapeamentos podem ser ajustados apos o spike M0 via FREDDO_ARGV_MAP.
@@ -81,6 +83,20 @@ DEFAULT_ARGV_MAP: dict[str, list[str]] = {
     "services.restart": ["{fm}", "-n", "services", "restart", "{service}"],
     "fm.migrate": ["{fm}", "-n", "migrate", "--auto-proceed"],
     "fm.self.update": ["{fm}", "-n", "self", "update", "--yes"],
+    "tunnel.up": [
+        "docker",
+        "compose",
+        "-f",
+        str(Path(__file__).resolve().parents[3] / "deploy" / "cloudflared.compose.yml"),
+        "up", "-d", "cloudflared",
+    ],
+    "tunnel.down": [
+        "docker",
+        "compose",
+        "-f",
+        str(Path(__file__).resolve().parents[3] / "deploy" / "cloudflared.compose.yml"),
+        "down",
+    ],
 }
 
 

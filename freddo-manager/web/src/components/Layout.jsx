@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity, Bell, Boxes, ChevronRight, FileClock, FileText, LayoutDashboard,
+  Activity, Bell, Boxes, ChevronRight, FileClock, FileText, Globe, LayoutDashboard,
   LogOut, RefreshCw, Server, Settings2, ShieldCheck, Terminal,
 } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
@@ -13,6 +13,7 @@ import { StepupDialog } from "./StepupDialog";
 
 const navigation = [
   { to: "/", label: "Visão geral", icon: LayoutDashboard, end: true },
+  { to: "/deployment", label: "Deploy", icon: Globe },
   { to: "/benches", label: "Benches", icon: Boxes },
   { to: "/jobs", label: "Jobs", icon: Activity },
   { to: "/telemetry", label: "Telemetria", icon: Terminal },

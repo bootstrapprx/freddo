@@ -20,11 +20,12 @@ vars:
   EXEC_USER: freddo
   COLLECTOR_USER: freddo-collector
   STATE_GROUP: freddo-manager
+  TUNNEL_GROUP: freddo-tunnel
   EXECUTOR_UID: "1001"
   EXECUTOR_GID: "1001"
 
-  PUBLIC_ORIGIN: https://console.example.com
-  CORS_ORIGINS: '["https://console.example.com"]'
+  PUBLIC_ORIGIN: http://127.0.0.1:8710
+  CORS_ORIGINS: '["http://127.0.0.1:8710"]'
   CONTAINER_RUNTIME: auto
   DOCKER_SOCKET: /var/run/docker.sock
   PODMAN_SOCKET: ""
@@ -68,6 +69,10 @@ tasks:
           echo "Corrigindo: criando grupo compartilhado {{.STATE_GROUP}}"
           $SUDO groupadd --system '{{.STATE_GROUP}}'
         fi
+        if ! getent group '{{.TUNNEL_GROUP}}' >/dev/null; then
+          echo "Corrigindo: criando grupo restrito do túnel {{.TUNNEL_GROUP}}"
+          $SUDO groupadd --system '{{.TUNNEL_GROUP}}'
+        fi
         if ! id -u "{{.EXEC_USER}}" >/dev/null 2>&1; then
           echo "FALTA: usuário {{.EXEC_USER}} dono dos benches (ajuste EXEC_USER ou crie-o)" >&2; fail=1
         else
@@ -89,6 +94,7 @@ tasks:
           check 'fmx no PATH do dono dos benches' as_exec sh -c 'command -v fmx'
           echo "Corrigindo: preparando estado compartilhado em {{.STATE_DIR}}"
           $SUDO install -d -o '{{.EXEC_USER}}' -g '{{.STATE_GROUP}}' -m 2770 '{{.STATE_DIR}}'
+          $SUDO install -d -o '{{.API_USER}}' -g '{{.TUNNEL_GROUP}}' -m 2770 '{{.STATE_DIR}}/cloudflared'
           for db in state.db telemetria.db; do
             database="{{.STATE_DIR}}/$db"
             if [ ! -f "$database" ]; then
@@ -133,6 +139,7 @@ tasks:
               fi
             fi
             check 'Docker socket {{.DOCKER_SOCKET}}' test -S '{{.DOCKER_SOCKET}}'
+            check 'Docker Compose plugin' docker compose version
             ;;
           podman)
             check 'Podman CLI' command -v podman
@@ -148,6 +155,7 @@ tasks:
               fi
             fi
             check "Podman socket acessível por {{.EXEC_USER}}: $PODMAN_SOCKET" as_exec test -S "$PODMAN_SOCKET"
+            check 'Podman Compose provider' as_exec podman compose version
             ;;
           *) echo "FALTA: CONTAINER_RUNTIME deve ser auto, docker ou podman (atual: $runtime)" >&2; fail=1 ;;
         esac
@@ -264,6 +272,9 @@ tasks:
         if ! getent group '{{.STATE_GROUP}}' >/dev/null 2>&1; then
           $SUDO groupadd --system '{{.STATE_GROUP}}'
         fi
+        if ! getent group '{{.TUNNEL_GROUP}}' >/dev/null 2>&1; then
+          $SUDO groupadd --system '{{.TUNNEL_GROUP}}'
+        fi
         FM_HOME='{{.FM_HOME}}'
         if [ -z "$FM_HOME" ] && [ -t 0 ]; then
           EXEC_HOME="$(getent passwd '{{.EXEC_USER}}' | cut -d: -f6)"
@@ -280,6 +291,7 @@ tasks:
         printf '%s\n' "$FM_HOME" | $SUDO tee "{{.CONFIG_DIR}}/fm-home" >/dev/null
         $SUDO chmod 644 "{{.CONFIG_DIR}}/fm-home"
         $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.STATE_GROUP}}" -m 2770 "{{.STATE_DIR}}"
+        $SUDO install -d -o "{{.API_USER}}" -g "{{.TUNNEL_GROUP}}" -m 2770 "{{.STATE_DIR}}/cloudflared"
         $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 755 "$FM_HOME"
         echo "deploy:prereq ok (FM_HOME=$FM_HOME)"
 
@@ -506,6 +518,7 @@ tasks:
     cmds:
       - |
         set -eu
+        freddo_home="${FREDDO_HOME:-{{.BACKUP_HOME}}}"
         runtime='{{.CONTAINER_RUNTIME}}'
         if [ "$runtime" = auto ]; then
           if command -v docker >/dev/null 2>&1 && [ -S '{{.DOCKER_SOCKET}}' ]; then runtime=docker
@@ -513,23 +526,7 @@ tasks:
           else runtime=docker; fi
         fi
         case "$runtime" in
-          docker) docker compose --env-file "{{.ROOT_DIR}}/.env" -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
-          podman) podman compose --env-file "{{.ROOT_DIR}}/.env" -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
+          docker) FREDDO_HOME="$freddo_home" docker compose -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
+          podman) FREDDO_HOME="$freddo_home" podman compose -f "{{.DEPLOY_DIR}}/cloudflared.compose.yml" {{.CLI_ARGS}} ;;
           *) echo "CONTAINER_RUNTIME deve ser auto, docker ou podman (atual: $runtime)" >&2; exit 2 ;;
         esac
-
-  saas:deploy:
-    desc: Cria bench/site e inicia o conector local (SAAS_DOMAIN=cliente.exemplo.com)
-    cmds:
-      - |
-        set -eu
-        : "${SAAS_DOMAIN:?defina SAAS_DOMAIN com o FQDN do site}"
-        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
-        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
-        FREDDO_HOME="{{.STATE_DIR}}" \
-        FREDDO_FM_HOME="$FM_HOME" \
-        "{{.FREDDO_BIN}}" saas deploy "$SAAS_DOMAIN" {{.CLI_ARGS}}
-        if ! task tunnel:compose -- up -d; then
-          echo "Bench criado em $SAAS_DOMAIN, mas o conector não iniciou; verifique o token e a rede fm-global-frontend-network." >&2
-          exit 1
-        fi

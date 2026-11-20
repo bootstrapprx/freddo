@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -98,6 +99,60 @@ class SelfUpdateRequest(BaseModel):
 class TemplateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     spec: dict[str, Any]
+
+
+class DeploymentDomainsRequest(BaseModel):
+    domains: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("domains")
+    @classmethod
+    def _valid_domains(cls, values: list[str]) -> list[str]:
+        from ..executor.allowlist import DOMAIN_RE
+
+        domains = [value.strip().lower().rstrip(".") for value in values]
+        if any(not DOMAIN_RE.fullmatch(value) for value in domains):
+            raise ValueError("dominios base invalidos")
+        if len(set(domains)) != len(domains):
+            raise ValueError("dominios duplicados")
+        return domains
+
+
+class TunnelTokenRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("token")
+    @classmethod
+    def _valid_token(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9+/_.=-]+", value):
+            raise ValueError("token deve ser uma unica linha valida")
+        return value
+
+
+class CreateSiteRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=63)
+    base_domain: str
+    version: str = "v15"
+    apps: list[str] = Field(default_factory=lambda: ["erpnext"], min_length=1)
+    environment: Literal["development", "staging", "production"] = "production"
+    idempotency_key: str | None = None
+
+    @field_validator("label")
+    @classmethod
+    def _valid_label(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", value):
+            raise ValueError("label de site invalido")
+        return value
+
+    @field_validator("base_domain")
+    @classmethod
+    def _valid_base_domain(cls, value: str) -> str:
+        from ..executor.allowlist import DOMAIN_RE
+
+        value = value.strip().lower().rstrip(".")
+        if not DOMAIN_RE.fullmatch(value):
+            raise ValueError("dominio base invalido")
+        return value
 
 
 class AlertRuleRequest(BaseModel):

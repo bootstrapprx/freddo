@@ -10,12 +10,13 @@ com nome distinto para não confundir com as tentativas abandonadas.
 ## Arquitetura
 
 ```
-Browser --HTTPS--> Cloudflare Tunnel/Access --> API (FastAPI, sem acesso ao runtime)
-                                                  | Unix socket + SO_PEERCRED
-                                                  v
-                                            Executor (fmx / docker|podman compose)
-                                                  |
-                                          Docker Engine ou Podman + arquivos do fm
+Browser (127.0.0.1) --> API (FastAPI, sem acesso ao runtime)
+                            | Unix socket + SO_PEERCRED
+                            v
+                      Executor (fmx / Docker|Podman Compose)
+                         |                       |
+                         v                       v
+                   Docker/Podman          cloudflared --> proxy global --> sites
 ```
 
 | Componente | Tecnologia | Papel |
@@ -75,7 +76,7 @@ task verify
 task deploy:preflight
 # FM_HOME é solicitado no TTY (padrão sugerido: $HOME/frappe do usuário dono dos benches)
 # ou pode ser passado explicitamente:
-task deploy FM_HOME=/caminho/escolhido/frappe PUBLIC_ORIGIN=https://console.seudominio.com
+task deploy FM_HOME=/caminho/escolhido/frappe
 ```
 
 `task deploy:preflight` funciona como doctor: cria as contas de serviço ausentes, cria a raiz
@@ -83,10 +84,11 @@ de benches se ela ainda não existir e habilita o daemon Docker ou o socket root
 quando necessário. Também ajusta o grupo/permissões dos bancos SQLite compartilhados e libera
 a chave TOTP somente para a API. Depois valida systemd, Python 3.12+, Node/npm, `fmx` e o
 acesso ao runtime configurado (`CONTAINER_RUNTIME=auto|docker|podman`). Dependências de
-aplicação ausentes, como `fmx` ou Node 22+, são apontadas com erro para evitar instalar versões
-incompatíveis. O deploy da aplicação é nativo via systemd e continua operando os benches
-existentes pelo Frappe-Manager e Docker/Podman. O caminho `FM_HOME` escolhido também é aplicado
-ao unit do Executor, sem depender de `/home/freddo/frappe`.
+aplicação ausentes, como `fmx`, Node 22+ ou o provider Compose do runtime, são apontadas com
+erro para evitar instalar versões incompatíveis. O deploy da aplicação é nativo via systemd e
+continua operando os benches existentes pelo Frappe-Manager e Docker/Podman. O caminho
+`FM_HOME` escolhido também é aplicado ao unit do Executor, sem depender de
+`/home/freddo/frappe`.
 
 Para bootstrap sem segundo fator, passe `--no-totp`:
 `task deploy:bootstrap -- --no-totp --force`. Para instalação manual, os passos
@@ -127,37 +129,37 @@ units nesse host. Para um socket rootful, use `/run/podman/podman.sock` com
 No modo rootless, o deploy executa o Coletor como o dono dos benches para que ele alcance o
 socket privado do Podman; a API continua sem acesso ao runtime.
 
-Unit files de exemplo em [`deploy/`](deploy/). A API escuta apenas em `127.0.0.1`; o acesso
-externo passa por Cloudflare Tunnel + Cloudflare Access. Defina
-`FREDDO_REQUIRE_CLOUDFLARE_JWT=1`, `FREDDO_CLOUDFLARE_ACCESS_TEAM=<team>` e
-`FREDDO_CLOUDFLARE_ACCESS_AUD=<aud>` para validar o JWT do Access além da sessão local.
+Unit files de exemplo em [`deploy/`](deploy/). A API escuta apenas em `127.0.0.1` e não
+participa do túnel público. Cloudflare Access JWT continua opcional como defesa extra, mas
+não é necessário para acessar o painel local.
 
 ### Cloudflare Tunnel + deploy de SaaS
 
-Freddo é local: cria o bench/site com o FQDN público escolhido pelo operador e orquestra
-o container oficial `cloudflared` via Compose. Não cria túneis, DNS ou ingress pela API.
-Configure o tunnel remote-managed e seus hostnames públicos no painel Cloudflare; para cada
-hostname, a origem deve ser `http://global-nginx-proxy:80`. O proxy compartilhado do
-Frappe-Manager direciona o hostname ao bench correspondente.
+O painel **Deploy** configura localmente o token do túnel existente, mantém os domínios base
+`kodoo.online` e `kalkulisto.com.br`, e cria sites como `erp.kodoo.online`. O token fica em
+`$FREDDO_HOME/cloudflared/cloudflared.env`, protegido pelo grupo `freddo-tunnel`; a tela nunca o devolve.
+O processo API não recebe acesso ao Docker: o Executor inicia o container `cloudflared`.
 
-Copie `.env.example` para `.env` e preencha `CLOUDFLARE_TUNNEL_TOKEN` com o token do túnel.
-Depois de criar o primeiro bench (que cria a rede externa `fm-global-frontend-network`), rode:
+No Cloudflare, mantenha o túnel remote-managed já criado e configure uma vez os hostnames
+wildcard `*.kodoo.online` e `*.kalkulisto.com.br` para o túnel, com origem
+`http://global-nginx-proxy:80`. Isso encaminha sites ao proxy compartilhado do
+Frappe-Manager. Não configure hostname público para o Freddo Manager. Os wildcards exigem
+que o operador controle a zona DNS dos domínios.
+
+No app, salve o token e os domínios base. Crie o primeiro site antes de conectar o túnel,
+pois o deploy cria a rede externa `fm-global-frontend-network`. Depois use **Conectar** no
+painel Deploy. O deploy de sites parte do formulário da aplicação, e não de uma task shell.
 
 ```bash
-SAAS_DOMAIN=cliente.exemplo.com task saas:deploy -- --apps erpnext hrms
 # Operar o container manualmente quando necessário:
 task tunnel:compose -- logs -f
 task tunnel:compose -- down
 ```
 
-`saas:deploy` primeiro usa o `JobExecutor` allowlistado para criar o bench/site; depois
-conecta `cloudflared` à rede externa. A senha administrativa gerada é exibida uma vez.
-O nome do bench é o FQDN do cliente e `www.<fqdn>` é registrado como alias. O túnel deve
-estar configurado no painel Cloudflare para encaminhar os hostnames ao proxy compartilhado.
-`CONTAINER_RUNTIME=auto|docker|podman` seleciona o runtime local; em Podman, `podman compose`
-requer um provider Compose instalado. Para o console, Cloudflare Access JWT continua sendo
-validado separadamente pelas opções `FREDDO_REQUIRE_CLOUDFLARE_JWT`,
-`FREDDO_CLOUDFLARE_ACCESS_TEAM` e `FREDDO_CLOUDFLARE_ACCESS_AUD`.
+O painel exibe uma vez a senha administrativa gerada. `CONTAINER_RUNTIME=auto|docker|podman`
+seleciona o runtime; neste servidor Docker é o padrão detectado. Em Podman,
+`podman compose` requer um provider Compose instalado. O painel local usa
+`http://127.0.0.1:8710` por padrão.
 
 ## Configuração
 
@@ -195,14 +197,13 @@ task dev                     # API + Vite (usa fmx/runtime reais)
 task runtime                 # inspeciona Docker/Podman
 task backup                  # backup consistente
 task tunnel:compose -- ps    # estado do conector local
-task saas:deploy SAAS_DOMAIN=cliente.exemplo.com
 ```
 
 Deploy em host Docker:
 
 ```bash
 task deploy \
-  PUBLIC_ORIGIN=https://console.example.com \
+  PUBLIC_ORIGIN=http://127.0.0.1:8710 \
   FM_HOME=/home/freddo/frappe
 ```
 
@@ -224,7 +225,7 @@ task deploy:podman \
 Outras tarefas: `task deploy:preflight`, `task deploy:prereq`, `task deploy:check`, `task deploy:env`,
 `task deploy:bootstrap`, `task deploy:units`,
 `task deploy:status`, `task deploy:logs -- -n 100`, `task deploy:restart`,
-`task tunnel:compose -- <args>`, `task saas:deploy` e
+`task tunnel:compose -- <args>` e
 `task deploy:docker` para reverter os drop-ins.
 
 ## Comandos implementados
@@ -246,7 +247,8 @@ Outras tarefas: `task deploy:preflight`, `task deploy:prereq`, `task deploy:chec
 `code` (abre VS Code local) está fora de escopo, conforme a especificação.
 
 Comandos CLI de operação: `freddo-manager bootstrap`, `configure`, `serve`, `executor`,
-`collector`, `runtime`, `catalog`, `verify-audit` e `saas deploy <fqdn>`. O `--help` de cada
+`collector`, `runtime`, `catalog` e `verify-audit`. Deploys públicos usam o painel Deploy para
+validar a associação ao domínio configurado. O `--help` de cada
 subcomando documenta as opções.
 
 ## Segurança

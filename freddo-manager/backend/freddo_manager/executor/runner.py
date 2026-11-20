@@ -99,7 +99,7 @@ class JobExecutor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self.settings.fm_home),
-            env=self.compat.env({**os.environ, "PYTHONUNBUFFERED": "1"}),
+            env=self.compat.env({**os.environ, "FREDDO_HOME": str(self.settings.home), "PYTHONUNBUFFERED": "1"}),
         )
         running = RunningJob(process=process)
         self._running[job_id] = running
