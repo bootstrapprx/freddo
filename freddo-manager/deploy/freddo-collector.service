@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=false
 ProtectSystem=strict
-ReadWritePaths=/var/lib/freddo-manager /home/freddo/frappe
+ReadWritePaths=/var/lib/freddo-manager
 LimitNOFILE=8192
 
 [Install]

@@ -71,10 +71,19 @@ existir antes; em hosts Docker ele precisa pertencer ao grupo `docker`.
 
 ```bash
 task verify
-# FM_HOME e solicitado no TTY (padrao sugerido: $HOME/frappe do usuario dono dos benches)
+# validação do host/runtime antes do deploy
+task deploy:preflight
+# FM_HOME é solicitado no TTY (padrão sugerido: $HOME/frappe do usuário dono dos benches)
 # ou pode ser passado explicitamente:
 task deploy FM_HOME=/caminho/escolhido/frappe PUBLIC_ORIGIN=https://console.seudominio.com
 ```
+
+O pré-flight verifica systemd, Python 3.12+, Node/npm, usuário e acesso à raiz dos benches,
+`fmx` e o socket do runtime configurado (`CONTAINER_RUNTIME=auto|docker|podman`). Ele só
+valida e informa o que falta; não instala pacotes do sistema. O deploy da aplicação é nativo
+via systemd e continua operando os benches existentes pelo Frappe-Manager e Docker/Podman.
+O caminho `FM_HOME` escolhido também é aplicado ao unit do Executor, sem depender de
+`/home/freddo/frappe`.
 
 Para bootstrap sem segundo fator, passe `--no-totp`:
 `task deploy:bootstrap -- --no-totp --force`. Para instalação manual, os passos

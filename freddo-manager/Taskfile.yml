@@ -28,14 +28,69 @@ vars:
   CLOUDFLARE_ORIGIN: http://127.0.0.1:8710
   CONTAINER_RUNTIME: auto
   DOCKER_SOCKET: /var/run/docker.sock
-  PODMAN_SOCKET: /run/user/1000/podman/podman.sock
-  XDG_RUNTIME_DIR: /run/user/1000
+  PODMAN_SOCKET: ""
+  XDG_RUNTIME_DIR: ""
 
 tasks:
   default:
     desc: Lista as tarefas disponíveis
     cmds:
       - task --list
+
+  deploy:preflight:
+    desc: Verifica sistema, benches, fmx e runtime antes de alterar o host
+    cmds:
+      - |
+        set -eu
+        fail=0
+        check() { label="$1"; shift; if ! "$@" >/dev/null 2>&1; then echo "FALTA: $label" >&2; fail=1; else echo "OK: $label"; fi; }
+        as_exec() { if [ "$(id -u)" -eq 0 ]; then runuser -u '{{.EXEC_USER}}' -- "$@"; else sudo -u '{{.EXEC_USER}}' -H "$@"; fi; }
+        check 'systemd/systemctl (deploy nativo)' command -v systemctl
+        check 'Python >= 3.12' python3 -c 'import sys; assert sys.version_info >= (3,12)'
+        check 'Node.js' command -v node
+        check 'npm (build web)' command -v npm
+        if [ "$(id -u)" -ne 0 ]; then check 'sudo' command -v sudo; fi
+        if ! id -u "{{.EXEC_USER}}" >/dev/null 2>&1; then
+          echo "FALTA: usuário {{.EXEC_USER}} dono dos benches (ajuste EXEC_USER ou crie-o)" >&2; fail=1
+        else
+          FM_HOME='{{.FM_HOME}}'
+          [ -n "$FM_HOME" ] || FM_HOME="$(cat '{{.CONFIG_DIR}}/fm-home' 2>/dev/null || true)"
+          [ -n "$FM_HOME" ] || FM_HOME="$(getent passwd '{{.EXEC_USER}}' | cut -d: -f6)/frappe"
+          case "$FM_HOME" in /*) ;; *) echo "FALTA: FM_HOME deve ser absoluto ($FM_HOME)" >&2; fail=1 ;; esac
+          if [ "$(id -u)" -eq 0 ]; then check runuser runuser -u '{{.EXEC_USER}}' -- true; fi
+          check "FM_HOME acessível pelo dono dos benches: $FM_HOME" as_exec test -r "$FM_HOME"
+          check "FM_HOME gravável pelo dono dos benches: $FM_HOME" as_exec test -w "$FM_HOME"
+          check 'fmx no PATH do dono dos benches' as_exec sh -c 'command -v fmx'
+        fi
+        runtime='{{.CONTAINER_RUNTIME}}'
+        PODMAN_SOCKET='{{.PODMAN_SOCKET}}'
+        XDG_RUNTIME_DIR='{{.XDG_RUNTIME_DIR}}'
+        if id -u '{{.EXEC_USER}}' >/dev/null 2>&1; then
+          EXEC_UID="$(id -u '{{.EXEC_USER}}')"
+          [ -n "$PODMAN_SOCKET" ] || PODMAN_SOCKET="/run/user/$EXEC_UID/podman/podman.sock"
+          [ -n "$XDG_RUNTIME_DIR" ] || XDG_RUNTIME_DIR="/run/user/$EXEC_UID"
+        fi
+        if [ "$runtime" = auto ]; then
+          if command -v docker >/dev/null 2>&1 && [ -S '{{.DOCKER_SOCKET}}' ]; then runtime=docker
+          elif command -v podman >/dev/null 2>&1; then runtime=podman
+          else runtime=docker; fi
+        fi
+        case "$runtime" in
+          docker)
+            check 'Docker CLI' command -v docker
+            check 'Docker socket {{.DOCKER_SOCKET}}' test -S '{{.DOCKER_SOCKET}}'
+            ;;
+          podman)
+            check 'Podman CLI' command -v podman
+            check "Podman socket acessível por {{.EXEC_USER}}: $PODMAN_SOCKET" as_exec test -S "$PODMAN_SOCKET"
+            ;;
+          *) echo "FALTA: CONTAINER_RUNTIME deve ser auto, docker ou podman (atual: $runtime)" >&2; fail=1 ;;
+        esac
+        if [ "$fail" -ne 0 ]; then
+          echo 'Pré-flight falhou; instale/ajuste os itens acima e rode novamente.' >&2
+          exit 1
+        fi
+        echo "Pré-flight ok (runtime=$runtime; deploy systemd nativo; benches preservados)"
 
   install:
     desc: Instala dependências Python e web
@@ -263,6 +318,9 @@ tasks:
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
         $SUDO install -d -m 755 "{{.SYSTEMD_DIR}}"
         $SUDO install -m 644 "{{.INSTALL_DIR}}"/deploy/*.service "{{.INSTALL_DIR}}"/deploy/*.target "{{.SYSTEMD_DIR}}/"
+        FM_HOME="$(cat '{{.CONFIG_DIR}}/fm-home')"
+        $SUDO install -d -m 755 "{{.SYSTEMD_DIR}}/freddo-executor.service.d"
+        printf '[Service]\nReadWritePaths=%s\n' "$FM_HOME" | $SUDO tee "{{.SYSTEMD_DIR}}/freddo-executor.service.d/20-fm-home.conf" >/dev/null
         $SUDO systemctl daemon-reload
         $SUDO systemctl enable freddo.target
         $SUDO systemctl restart freddo.target
@@ -274,15 +332,20 @@ tasks:
         set -eu
         SUDO=""
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        PODMAN_SOCKET='{{.PODMAN_SOCKET}}'
+        XDG_RUNTIME_DIR='{{.XDG_RUNTIME_DIR}}'
+        EXEC_UID="$(id -u '{{.EXEC_USER}}')"
+        [ -n "$PODMAN_SOCKET" ] || PODMAN_SOCKET="/run/user/$EXEC_UID/podman/podman.sock"
+        [ -n "$XDG_RUNTIME_DIR" ] || XDG_RUNTIME_DIR="/run/user/$EXEC_UID"
         for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
           dropin="{{.SYSTEMD_DIR}}/$unit.d"
           $SUDO install -d -m 755 "$dropin"
-          printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups=\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR={{.XDG_RUNTIME_DIR}}\nEnvironment=FREDDO_PODMAN_SOCKET={{.PODMAN_SOCKET}}\n' \
+          printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups=\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR=%s\nEnvironment=FREDDO_PODMAN_SOCKET=%s\n' "$XDG_RUNTIME_DIR" "$PODMAN_SOCKET" \
             | $SUDO tee "$dropin/10-podman.conf" >/dev/null
         done
         $SUDO systemctl daemon-reload
         $SUDO systemctl restart freddo.target
-        echo "Podman configurado. Socket: {{.PODMAN_SOCKET}}"
+        echo "Podman configurado. Socket: $PODMAN_SOCKET"
 
   deploy:docker:
     desc: Remove os drop-ins do Podman e volta ao Docker
@@ -316,6 +379,7 @@ tasks:
   deploy:
     desc: Deploy completo (pre-requisitos + arquivos + env + bootstrap + units)
     cmds:
+      - task: deploy:preflight
       - task: deploy:prereq
       - task: deploy:check
       - task: deploy:files
