@@ -69,6 +69,7 @@ DEFAULT_ARGV_MAP: dict[str, list[str]] = {
     "bench.reset": ["{fm}", "-n", "reset", "{bench}"],
     "bench.update": ["{fm}", "-n", "update", "{bench}", "--environment", "{environment}"],
     "bench.logs": ["{fm}", "-n", "logs", "{bench}", "--service", "{service}", "--follow"],
+    "bench.shell": ["{fm}", "-n", "shell", "{bench}"],
     "ssl.status": ["{fm}", "-n", "ssl", "list"],
     "ssl.issue": ["{fm}", "-n", "ssl", "add", "{bench}", "{domain}"],
     "ssl.renew": ["{fm}", "-n", "ssl", "renew", "{bench}"],

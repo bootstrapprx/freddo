@@ -1,13 +1,19 @@
-"""Terminal WebSocket (S8): desligado por padrao, step-up e sessao gravada."""
+"""Terminal WebSocket (S8): desligado por padrao, step-up e sessao gravada.
+
+O `fmx shell` roda no Executor (allowlist + SO_PEERCRED). A API apenas repassa
+entrada/saida ao navegador e grava o transcript — ela nao invoca o runtime.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ...executor.client import ExecutorUnavailable
 from ...security import SESSION_COOKIE, allowed_stepup, redact
 from ..state import get_app_state
 
@@ -43,64 +49,43 @@ async def shell(websocket: WebSocket, bench: str) -> None:
     session_dir.mkdir(parents=True, exist_ok=True)
     transcript = session_dir / f"{bench}-{int(time.time())}.log"
     await state.audit.record("shell.open", target=bench, detail={"transcript": str(transcript)})
-    await websocket.send_json({"type": "connected", "bench": bench})
 
     try:
-        process = await asyncio.create_subprocess_exec(
-            state.settings.fm_bin,
-            "shell",
-            bench,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(state.settings.fm_home),
-            env=state.compat.env(),
-        )
-    except OSError as exc:
+        shell_session = await state.executor.shell(bench)
+    except ExecutorUnavailable as exc:
         await websocket.send_json({"type": "error", "message": str(exc)})
         await websocket.close(code=1011)
         return
 
-    async def pump() -> None:
-        assert process.stdout
+    await websocket.send_json({"type": "connected", "bench": bench})
+
+    async def read_input() -> None:
         while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            text = redact(line.decode("utf-8", "replace"))
-            with transcript.open("a") as handle:
-                handle.write(text)
-            await websocket.send_json({"type": "output", "data": text})
-
-    reader_task = asyncio.create_task(pump())
-    deadline = time.monotonic() + 30 * 60
-    try:
-        while time.monotonic() < deadline:
-            try:
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=5)
-            except TimeoutError:
-                continue
-            import json
-
+            message = await websocket.receive_text()
             payload = json.loads(message)
             if payload.get("type") != "input":
                 continue
             data = str(payload.get("data", ""))
             with transcript.open("a") as handle:
                 handle.write(f"$ {redact(data)}\n")
-            if process.stdin:
-                process.stdin.write(data.encode())
-                await process.stdin.drain()
+            await shell_session.send(data)
+
+    reader_task = asyncio.create_task(read_input())
+    try:
+        async for event in shell_session.events():
+            data = event.get("data")
+            if data:
+                text = redact(str(data))
+                with transcript.open("a") as handle:
+                    handle.write(text)
+                await websocket.send_json({"type": "output", "data": text})
     except WebSocketDisconnect:
         pass
+    except (ExecutorUnavailable, OSError):
+        pass
     finally:
-        if process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except TimeoutError:
-                process.kill()
-        if reader_task:
-            reader_task.cancel()
+        reader_task.cancel()
+        await asyncio.gather(reader_task, return_exceptions=True)
+        await shell_session.close()
         await state.audit.record("shell.close", target=bench, detail={"transcript": str(transcript)})
         await websocket.close()

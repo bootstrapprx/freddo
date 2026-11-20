@@ -17,6 +17,58 @@ class ExecutorUnavailable(RuntimeError):
     pass
 
 
+class ShellSession:
+    """Canal interativo com o `fmx shell` executado dentro do Executor."""
+
+    def __init__(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        request_id: str,
+        first: dict[str, Any] | None = None,
+    ) -> None:
+        self._reader = reader
+        self._writer = writer
+        self._request_id = request_id
+        self._first = first
+        self._closed = False
+
+    async def send(self, data: str) -> None:
+        await write_message(self._writer, {"id": self._request_id, "cmd": "shell_input", "data": data})
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await write_message(self._writer, {"id": self._request_id, "cmd": "shell_close"})
+            self._writer.close()
+            await self._writer.wait_closed()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            pass
+
+    async def events(self) -> AsyncIterator[dict[str, Any]]:
+        if self._first is not None:
+            first = self._first
+            self._first = None
+            payload = first.get("payload")
+            if isinstance(payload, dict):
+                yield payload
+        while True:
+            message = await read_message(self._reader)
+            if message is None:
+                return
+            kind = message.get("type")
+            if kind == "error":
+                yield {"event": "error", "line": str(message.get("payload"))}
+                return
+            if kind == "done":
+                return
+            payload = message.get("payload")
+            if isinstance(payload, dict):
+                yield payload
+
+
 class ExecutorClient:
     def __init__(self, socket_path: str | Path, timeout: float = 30.0) -> None:
         self.socket_path = Path(socket_path)
@@ -102,6 +154,20 @@ class ExecutorClient:
         finally:
             writer.close()
             await writer.wait_closed()
+
+    async def shell(self, bench: str) -> ShellSession:
+        reader, writer = await self._connect()
+        request_id = self._id
+        try:
+            await write_message(writer, {"id": request_id, "cmd": "shell", "bench": bench})
+            first = await asyncio.wait_for(read_message(reader), timeout=self.timeout)
+            if first and first.get("type") == "error":
+                raise ExecutorUnavailable(str(first.get("payload")))
+        except Exception:
+            writer.close()
+            await writer.wait_closed()
+            raise
+        return ShellSession(reader, writer, request_id, first)
 
     async def cancel(self, job_id: str) -> bool:
         result = await self.command("cancel", job_id=job_id)

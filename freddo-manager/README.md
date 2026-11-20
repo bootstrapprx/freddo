@@ -158,7 +158,9 @@ o painel não inventa sites: se o diretório não existe, a lista é vazia.
 
 Os papéis continuam separados: a API permanece sem acesso ao runtime; o CLI de deploy é
 executado no host como o usuário dono dos benches, usando o mesmo Executor e a mesma
-auditoria. Para proteger o console com Access além da sessão local, configure o aplicativo
+auditoria. O túnel termina TLS na Cloudflare, então a origem é HTTP em loopback — não é
+necessário emitir certificado Let's Encrypt com `fmx ssl add` nesse cenário.
+Para proteger o console com Access além da sessão local, configure o aplicativo
 do Access para o hostname do túnel e os env `FREDDO_REQUIRE_CLOUDFLARE_JWT`,
 `FREDDO_CLOUDFLARE_ACCESS_TEAM` e `FREDDO_CLOUDFLARE_ACCESS_AUD`.
 
@@ -257,7 +259,8 @@ e `saas deploy <fqdn>`. O `--help` de cada subcomando documenta as opções.
 - sessão em cookie HttpOnly/Secure/SameSite=Strict, só o hash no banco, ociosa 30 min / absoluta 12 h;
 - CSRF por requisição + checagem de `Origin`, CSP rígida e headers de hardening;
 - step-up (5 min) para delete, reset, ngrok, shell, migrate e self update;
-- Executor com allowlist, argv em lista (nunca shell), `SO_PEERCRED`, locks por bench e globais;
+- Executor com allowlist, argv em lista (nunca shell), `SO_PEERCRED` (uid **e** gid), locks por bench e globais;
+- até o terminal web (`fmx shell`) roda dentro do Executor: a API só repassa E/S e grava o transcript;
 - shim Docker/Podman feito com symlink em diretório privado, sem wrapper shell;
 - redação de segredos na saída de jobs e audit log encadeado por hash (`freddo-manager verify-audit`);
 - segredos cifrados com chave do host em `FREDDO_HOME/secret.key` (guarde fora do host).

@@ -15,6 +15,7 @@ import threading
 from ..config import Settings
 from ..fm.adapter import FmAdapter
 from ..runtime import ContainerCompat
+from ..security import redact
 from .allowlist import Allowlist, ValidationError
 from .protocol import read_message, write_message
 from .runner import JobExecutor
@@ -73,10 +74,13 @@ class ExecutorServer:
                 log.warning("SO_PEERCRED indisponivel; conexao recusada por politica")
                 return False
             return True
-        uid, _gid = creds
-        expected = self.settings.executor_uid or os.getuid()
-        if uid != expected:
-            log.warning("conexao recusada: uid %d != %d", uid, expected)
+        uid, gid = creds
+        expected_uid = self.settings.executor_uid or os.getuid()
+        if uid != expected_uid:
+            log.warning("conexao recusada: uid %d != %d", uid, expected_uid)
+            return False
+        if self.settings.executor_gid is not None and gid != self.settings.executor_gid:
+            log.warning("conexao recusada: gid %d != %d", gid, self.settings.executor_gid)
             return False
         return True
 
@@ -111,6 +115,8 @@ class ExecutorServer:
                     await self._handle_read(request_id, message, writer)
                 elif cmd == "run":
                     await self._handle_run(request_id, message, writer)
+                elif cmd == "shell":
+                    await self._handle_shell(request_id, message, reader, writer)
                 elif cmd == "cancel":
                     ok = await self.executor.cancel(str(message.get("job_id", "")))
                     await write_message(writer, {"id": request_id, "type": "data", "payload": {"cancelled": ok}})
@@ -160,6 +166,97 @@ class ExecutorServer:
                 writer, {"id": request_id, "type": "event", "payload": {"event": "error", "line": str(exc)}}
             )
         await write_message(writer, {"id": request_id, "type": "done", "payload": {"job_id": job_id}})
+
+
+    async def _handle_shell(
+        self,
+        request_id: str,
+        message: dict[str, object],
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Sessao interativa: o fmx roda apenas aqui, nunca no processo da API."""
+        bench = str(message.get("bench", ""))
+        try:
+            op = self.allowlist.build("bench.shell", {"bench": bench}, timeout=1800)
+        except ValidationError as exc:
+            await write_message(writer, {"id": request_id, "type": "error", "payload": str(exc)})
+            return
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *op.argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(self.settings.fm_home),
+                env=self.compat.env({**os.environ, "PYTHONUNBUFFERED": "1"}),
+            )
+        except OSError as exc:
+            await write_message(writer, {"id": request_id, "type": "error", "payload": str(exc)})
+            return
+
+        await write_message(
+            writer, {"id": request_id, "type": "data", "payload": {"connected": True, "bench": bench}}
+        )
+
+        async def pump() -> None:
+            assert process.stdout is not None
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                await write_message(
+                    writer,
+                    {
+                        "id": request_id,
+                        "type": "event",
+                        "payload": {"event": "output", "data": redact(line.decode("utf-8", "replace"))},
+                    },
+                )
+            code = await process.wait()
+            await write_message(
+                writer,
+                {
+                    "id": request_id,
+                    "type": "event",
+                    "payload": {"event": "exit", "exit_code": code},
+                },
+            )
+            await write_message(
+                writer, {"id": request_id, "type": "done", "payload": {"bench": bench, "exit_code": code}}
+            )
+
+        pump_task = asyncio.create_task(pump())
+        try:
+            while not pump_task.done():
+                incoming_task = asyncio.create_task(read_message(reader))
+                done, _pending = await asyncio.wait(
+                    {pump_task, incoming_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if pump_task in done:
+                    incoming_task.cancel()
+                    break
+                incoming = incoming_task.result()
+                if incoming is None:
+                    break
+                command = incoming.get("cmd")
+                if command == "shell_input" and process.stdin is not None:
+                    process.stdin.write(str(incoming.get("data", "")).encode())
+                    await process.stdin.drain()
+                elif command == "shell_close":
+                    break
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=self.settings.job_grace_seconds)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+            pump_task.cancel()
+            await asyncio.gather(pump_task, return_exceptions=True)
 
 
 def install_signal_handlers(server: ExecutorServer) -> None:
