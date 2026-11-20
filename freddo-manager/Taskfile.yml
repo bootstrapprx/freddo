@@ -2,6 +2,7 @@ version: "3"
 
 vars:
   VENV_DIR: "{{.ROOT_DIR}}/.venv"
+  DEV_HOME: "{{.ROOT_DIR}}/.state/dev"
   PYTHON: "{{.ROOT_DIR}}/.venv/bin/python"
   FREDDO_BIN: "{{.ROOT_DIR}}/.venv/bin/freddo-manager"
   WEB_DIR: "{{.ROOT_DIR}}/web"
@@ -207,11 +208,15 @@ tasks:
 
   dev:
     desc: Sobe API e Vite em paralelo (fmx/runtime reais)
+    env:
+      FREDDO_HOME: "{{.DEV_HOME}}"
     cmds:
       - '{{.PYTHON}} "{{.ROOT_DIR}}/scripts/dev.py" "{{.FREDDO_BIN}}" "{{.WEB_DIR}}"'
 
   dev:api:
     desc: Sobe apenas a API
+    env:
+      FREDDO_HOME: "{{.DEV_HOME}}"
     cmds:
       - '"{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
 

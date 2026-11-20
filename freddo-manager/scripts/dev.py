@@ -19,7 +19,7 @@ def main() -> int:
     processes = [
         subprocess.Popen([freddo_bin, "serve"]),
         subprocess.Popen(
-            [str(web_dir / "node_modules/.bin/vite"), str(web_dir), "--host", "0.0.0.0", "--strictPort"],
+            [str(web_dir / "node_modules/.bin/vite"), str(web_dir), "--host", "127.0.0.1", "--strictPort"],
             cwd=web_dir,
         ),
     ]
