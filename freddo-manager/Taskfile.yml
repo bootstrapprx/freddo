@@ -14,7 +14,8 @@ vars:
   BACKUP_DIR: /var/backups/freddo-manager
   BACKUP_HOME: "{{.STATE_DIR}}"
 
-  FM_HOME: /home/freddo/frappe
+  # FM_HOME nao tem valor fixo: informe `FM_HOME=...` ou deixe `deploy:prereq`
+  # solicitar em um terminal (padrao sugerido: $HOME/frappe no servidor).
   API_USER: freddo-api
   EXEC_USER: freddo
   COLLECTOR_USER: freddo-collector
@@ -140,23 +141,41 @@ tasks:
           echo "dono dos benches ausente: {{.EXEC_USER}} (crie antes ou ajuste EXEC_USER)" >&2
           exit 1
         fi
-        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 700 "{{.STATE_DIR}}"
+        FM_HOME='{{.FM_HOME}}'
+        if [ -z "$FM_HOME" ] && [ -t 0 ]; then
+          printf 'Caminho dos benches do Frappe-Manager [%s/frappe]: ' "$HOME" >&2
+          read -r answer || true
+          FM_HOME="${answer:-$HOME/frappe}"
+        fi
+        if [ -z "$FM_HOME" ]; then
+          echo "Defina FM_HOME (ex.: FM_HOME=/home/freddo/frappe) ou rode em um TTY." >&2
+          exit 1
+        fi
+        case "$FM_HOME" in /*) ;; *) echo "FM_HOME deve ser absoluto: $FM_HOME" >&2; exit 1 ;; esac
         $SUDO install -d -o root -g root -m 700 "{{.CONFIG_DIR}}"
-        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 755 "{{.FM_HOME}}"
-        echo "deploy:prereq ok"
+        printf '%s\n' "$FM_HOME" | $SUDO tee "{{.CONFIG_DIR}}/fm-home" >/dev/null
+        $SUDO chmod 644 "{{.CONFIG_DIR}}/fm-home"
+        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 700 "{{.STATE_DIR}}"
+        $SUDO install -d -o "{{.EXEC_USER}}" -g "{{.EXEC_USER}}" -m 755 "$FM_HOME"
+        echo "deploy:prereq ok (FM_HOME=$FM_HOME)"
 
   deploy:check:
     desc: Valida usuários, diretórios e build antes do deploy
     cmds:
       - |
         set -eu
+        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
+        if [ -z "$FM_HOME" ]; then
+          echo "rode 'task deploy:prereq' primeiro" >&2
+          exit 1
+        fi
         for user in "{{.API_USER}}" "{{.EXEC_USER}}" "{{.COLLECTOR_USER}}"; do
           if ! id -u "$user" >/dev/null 2>&1; then
             echo "usuário ausente: $user (crie antes ou ajuste a variável)" >&2
             exit 1
           fi
         done
-        for path in "{{.FM_HOME}}" "{{.STATE_DIR}}"; do
+        for path in "$FM_HOME" "{{.STATE_DIR}}"; do
           if [ ! -d "$path" ]; then
             echo "diretório ausente: $path" >&2
             exit 1
@@ -199,6 +218,8 @@ tasks:
         SUDO=""
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
         $SUDO install -d -m 700 "{{.CONFIG_DIR}}"
+        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
+        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
         EXEC_UID="$(id -u "{{.API_USER}}" 2>/dev/null || printf '%s' '{{.EXECUTOR_UID}}')"
         EXEC_GID="$(id -g "{{.API_USER}}" 2>/dev/null || printf '%s' '{{.EXECUTOR_GID}}')"
         for name in api executor collector; do
@@ -206,7 +227,7 @@ tasks:
           sed \
             -e 's|^FREDDO_HOME=.*|FREDDO_HOME={{.STATE_DIR}}|' \
             -e 's|^FREDDO_FM_BIN=.*|FREDDO_FM_BIN=fmx|' \
-            -e 's|^FREDDO_FM_HOME=.*|FREDDO_FM_HOME={{.FM_HOME}}|' \
+            -e "s|^FREDDO_FM_HOME=.*|FREDDO_FM_HOME=$FM_HOME|" \
             -e 's|^FREDDO_PUBLIC_ORIGIN=.*|FREDDO_PUBLIC_ORIGIN={{.PUBLIC_ORIGIN}}|' \
             -e 's|^FREDDO_CORS_ORIGINS=.*|FREDDO_CORS_ORIGINS={{.CORS_ORIGINS}}|' \
             -e "s|^FREDDO_EXECUTOR_UID=.*|FREDDO_EXECUTOR_UID=$EXEC_UID|" \
@@ -226,10 +247,12 @@ tasks:
         set -eu
         SUDO=""
         [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
+        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
         $SUDO -u "{{.EXEC_USER}}" -H env \
           FREDDO_HOME="{{.STATE_DIR}}" \
-          FREDDO_FM_HOME="{{.FM_HOME}}" \
-          "{{.INSTALL_DIR}}/.venv/bin/freddo-manager" bootstrap {{.CLI_ARGS}}
+          FREDDO_FM_HOME="$FM_HOME" \
+          "{{.INSTALL_DIR}}/.venv/bin/freddo-manager" bootstrap --fm-home "$FM_HOME" {{.CLI_ARGS}}
 
   deploy:units:
     desc: Instala units systemd, recarrega e reinicia a stack
@@ -307,8 +330,10 @@ tasks:
         set -eu
         : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
         : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
+        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
+        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
         FREDDO_HOME="{{.STATE_DIR}}" \
-        FREDDO_FM_HOME="{{.FM_HOME}}" \
+        FREDDO_FM_HOME="$FM_HOME" \
         FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
         FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
         "{{.FREDDO_BIN}}" cloudflare setup
@@ -330,8 +355,10 @@ tasks:
         : "${SAAS_DOMAIN:?defina SAAS_DOMAIN com o FQDN do site}"
         : "${FREDDO_CLOUDFLARE_API_TOKEN:?defina FREDDO_CLOUDFLARE_API_TOKEN no ambiente}"
         : "${FREDDO_CLOUDFLARE_ACCOUNT_ID:?defina FREDDO_CLOUDFLARE_ACCOUNT_ID no ambiente}"
+        FM_HOME="$(cat "{{.CONFIG_DIR}}/fm-home" 2>/dev/null || printf '%s' '{{.FM_HOME}}')"
+        if [ -z "$FM_HOME" ]; then echo "rode 'task deploy:prereq' primeiro" >&2; exit 1; fi
         FREDDO_HOME="{{.STATE_DIR}}" \
-        FREDDO_FM_HOME="{{.FM_HOME}}" \
+        FREDDO_FM_HOME="$FM_HOME" \
         FREDDO_CLOUDFLARE_TUNNEL_NAME="{{.CLOUDFLARE_TUNNEL_NAME}}" \
         FREDDO_CLOUDFLARE_ORIGIN="{{.CLOUDFLARE_ORIGIN}}" \
         "{{.FREDDO_BIN}}" saas deploy "$SAAS_DOMAIN" {{.CLI_ARGS}}

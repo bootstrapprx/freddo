@@ -71,8 +71,9 @@ existir antes; em hosts Docker ele precisa pertencer ao grupo `docker`.
 
 ```bash
 task verify
-task deploy FM_HOME=/home/freddo/frappe PUBLIC_ORIGIN=https://console.seudominio.com \
-  EXECUTOR_UID=$(id -u freddo-api) EXECUTOR_GID=$(id -g freddo-api)
+# FM_HOME e solicitado no TTY (padrao sugerido: $HOME/frappe do usuario dono dos benches)
+# ou pode ser passado explicitamente:
+task deploy FM_HOME=/caminho/escolhido/frappe PUBLIC_ORIGIN=https://console.seudominio.com
 ```
 
 Para bootstrap sem segundo fator, passe `--no-totp`:
@@ -128,6 +129,16 @@ Nenhum segredo é escrito em units, `.env` ou no repositório.
 
 Pré-requisitos: `cloudflared` instalado no host, domínio com nameservers na Cloudflare e
 `FREDDO_CLOUDFLARE_API_TOKEN` / `FREDDO_CLOUDFLARE_ACCOUNT_ID` no ambiente do operador.
+O conector só faz conexões **saentes** (TCP/7844); não é preciso abrir portas no firewall.
+
+No servidor Debian (esta estação é apenas a estação de trabalho):
+
+```bash
+# amd64; para outras arquiteturas troque por arm64/arm/386
+curl -fsSLO https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo apt-get install -y ./cloudflared-linux-amd64.deb
+cloudflared --version
+```
 
 ```bash
 # cria/recupera túnel + serviço + rotas dos benches já existentes
@@ -209,6 +220,9 @@ task deploy \
   FM_HOME=/home/freddo/frappe
 ```
 
+`FM_HOME` nunca é fixo: `deploy:prereq` pergunta em um terminal e grava a resposta em
+`/etc/freddo-manager/fm-home` para as tarefas seguintes (ou use `FM_HOME=...`). O valor também
+é persistido no `config.json` do usuário dono dos benches pelo bootstrap.
 `EXECUTOR_UID`/`EXECUTOR_GID` são derivados automaticamente da conta da API; as vars
 do Taskfile só são usadas como fallback se a conta ainda não existir.
 
