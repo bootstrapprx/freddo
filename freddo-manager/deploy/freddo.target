@@ -1,0 +1,7 @@
+[Unit]
+Description=freddo-manager stack
+Requires=freddo-executor.service freddo-api.service freddo-collector.service
+After=freddo-executor.service freddo-api.service freddo-collector.service
+
+[Install]
+WantedBy=multi-user.target

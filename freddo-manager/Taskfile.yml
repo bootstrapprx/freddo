@@ -1,0 +1,262 @@
+version: "3"
+
+vars:
+  VENV_DIR: "{{.ROOT_DIR}}/.venv"
+  PYTHON: "{{.ROOT_DIR}}/.venv/bin/python"
+  FREDDO_BIN: "{{.ROOT_DIR}}/.venv/bin/freddo-manager"
+  WEB_DIR: "{{.ROOT_DIR}}/web"
+  DEPLOY_DIR: "{{.ROOT_DIR}}/deploy"
+
+  INSTALL_DIR: /opt/freddo-manager
+  STATE_DIR: /var/lib/freddo-manager
+  CONFIG_DIR: /etc/freddo-manager
+  SYSTEMD_DIR: /etc/systemd/system
+  BACKUP_DIR: /var/backups/freddo-manager
+  BACKUP_HOME: "{{.STATE_DIR}}"
+
+  FM_HOME: /home/freddo/frappe
+  API_USER: freddo-api
+  EXEC_USER: freddo
+  COLLECTOR_USER: freddo-collector
+  EXECUTOR_UID: "1001"
+  EXECUTOR_GID: "1001"
+
+  PUBLIC_ORIGIN: https://console.example.com
+  CORS_ORIGINS: '["https://console.example.com"]'
+  CONTAINER_RUNTIME: auto
+  DOCKER_SOCKET: /var/run/docker.sock
+  PODMAN_SOCKET: /run/user/1000/podman/podman.sock
+  XDG_RUNTIME_DIR: /run/user/1000
+
+tasks:
+  default:
+    desc: Lista as tarefas disponíveis
+    cmds:
+      - task --list
+
+  install:
+    desc: Instala dependências Python e web
+    cmds:
+      - |
+        set -eu
+        if command -v uv >/dev/null 2>&1; then
+          uv venv "{{.VENV_DIR}}"
+          uv pip install -e '.[dev]'
+        else
+          python3 -m venv "{{.VENV_DIR}}"
+          "{{.VENV_DIR}}/bin/pip" install -e '.[dev]'
+        fi
+      - npm --prefix "{{.WEB_DIR}}" ci
+
+  build:
+    desc: Gera o build estático da SPA
+    cmds:
+      - npm --prefix "{{.WEB_DIR}}" run build
+
+  lint:
+    desc: Ruff em backend e testes
+    cmds:
+      - '"{{.VENV_DIR}}/bin/ruff" check backend tests'
+
+  test:
+    desc: Testes de integração da API
+    cmds:
+      - '"{{.VENV_DIR}}/bin/pytest" -q'
+
+  verify:
+    desc: Ruff + pytest + lock + build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv lock --check
+        fi
+
+  dev:
+    desc: Sobe API e Vite em paralelo (fmx/runtime reais)
+    cmds:
+      - '{{.PYTHON}} "{{.ROOT_DIR}}/scripts/dev.py" "{{.FREDDO_BIN}}" "{{.WEB_DIR}}"'
+
+  dev:api:
+    desc: Sobe apenas a API
+    cmds:
+      - '"{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
+
+  dev:web:
+    desc: Sobe apenas o Vite
+    cmds:
+      - npm --prefix "{{.WEB_DIR}}" run dev
+
+  runtime:
+    desc: Mostra o runtime de containers detectado
+    cmds:
+      - '"{{.FREDDO_BIN}}" runtime'
+
+  catalog:
+    desc: Mostra o mapa de comandos allowlistados
+    cmds:
+      - '"{{.FREDDO_BIN}}" catalog'
+
+  bootstrap:
+    desc: 'Cria a credencial (ex.: task bootstrap -- --password "Senha!" --no-totp --force)'
+    cmds:
+      - '"{{.FREDDO_BIN}}" bootstrap {{.CLI_ARGS}}'
+
+  serve:
+    desc: Sobe API + Executor + Coletor
+    cmds:
+      - '"{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
+
+  audit:
+    desc: Verifica a cadeia do audit log
+    cmds:
+      - '"{{.FREDDO_BIN}}" verify-audit'
+
+  backup:
+    desc: Backup consistente dos bancos e do secret.key
+    env:
+      FREDDO_HOME: "{{.BACKUP_HOME}}"
+      FREDDO_MANAGER_BIN: "{{.INSTALL_DIR}}/.venv/bin/freddo-manager"
+    cmds:
+      - bash "{{.DEPLOY_DIR}}/backup.sh" "{{.BACKUP_DIR}}"
+
+  deploy:check:
+    desc: Valida usuários, diretórios e build antes do deploy
+    cmds:
+      - |
+        set -eu
+        for user in "{{.API_USER}}" "{{.EXEC_USER}}" "{{.COLLECTOR_USER}}"; do
+          if ! id -u "$user" >/dev/null 2>&1; then
+            echo "usuário ausente: $user (crie antes ou ajuste a variável)" >&2
+            exit 1
+          fi
+        done
+        for path in "{{.FM_HOME}}" "{{.STATE_DIR}}"; do
+          if [ ! -d "$path" ]; then
+            echo "diretório ausente: $path" >&2
+            exit 1
+          fi
+        done
+        if [ ! -x "{{.VENV_DIR}}/bin/freddo-manager" ]; then
+          echo "rode 'task install' primeiro" >&2
+          exit 1
+        fi
+        if [ ! -f "{{.WEB_DIR}}/dist/index.html" ]; then
+          echo "rode 'task build' primeiro" >&2
+          exit 1
+        fi
+        echo "deploy:check ok"
+
+  deploy:files:
+    desc: Copia o código para INSTALL_DIR e instala o venv
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        $SUDO install -d -m 755 "{{.INSTALL_DIR}}"
+        if command -v rsync >/dev/null 2>&1; then
+          $SUDO rsync -a --exclude .git --exclude .venv --exclude node_modules ./ "{{.INSTALL_DIR}}/"
+        else
+          $SUDO tar --exclude=.git --exclude=.venv --exclude=node_modules -cf - . | $SUDO tar -xf - -C "{{.INSTALL_DIR}}"
+        fi
+        $SUDO python3 -m venv "{{.INSTALL_DIR}}/.venv"
+        $SUDO "{{.INSTALL_DIR}}/.venv/bin/pip" install --upgrade pip
+        $SUDO "{{.INSTALL_DIR}}/.venv/bin/pip" install "{{.INSTALL_DIR}}"
+        npm --prefix "{{.INSTALL_DIR}}/web" ci
+        npm --prefix "{{.INSTALL_DIR}}/web" run build
+
+  deploy:env:
+    desc: Gera api.env, executor.env e collector.env em CONFIG_DIR
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        $SUDO install -d -m 700 "{{.CONFIG_DIR}}"
+        for name in api executor collector; do
+          tmp="$(mktemp)"
+          sed \
+            -e 's|^FREDDO_HOME=.*|FREDDO_HOME={{.STATE_DIR}}|' \
+            -e 's|^FREDDO_FM_BIN=.*|FREDDO_FM_BIN=fmx|' \
+            -e 's|^FREDDO_FM_HOME=.*|FREDDO_FM_HOME={{.FM_HOME}}|' \
+            -e 's|^FREDDO_PUBLIC_ORIGIN=.*|FREDDO_PUBLIC_ORIGIN={{.PUBLIC_ORIGIN}}|' \
+            -e 's|^FREDDO_CORS_ORIGINS=.*|FREDDO_CORS_ORIGINS={{.CORS_ORIGINS}}|' \
+            -e 's|^FREDDO_EXECUTOR_UID=.*|FREDDO_EXECUTOR_UID={{.EXECUTOR_UID}}|' \
+            -e 's|^FREDDO_EXECUTOR_GID=.*|FREDDO_EXECUTOR_GID={{.EXECUTOR_GID}}|' \
+            "{{.INSTALL_DIR}}/.env.example" > "$tmp"
+          printf 'FREDDO_CONTAINER_RUNTIME=%s\nFREDDO_DOCKER_SOCKET=%s\n' \
+            "{{.CONTAINER_RUNTIME}}" "{{.DOCKER_SOCKET}}" >> "$tmp"
+          $SUDO install -m 600 "$tmp" "{{.CONFIG_DIR}}/$name.env"
+          rm -f "$tmp"
+        done
+        echo "envs gerados em {{.CONFIG_DIR}}"
+
+  deploy:units:
+    desc: Instala units systemd, recarrega e reinicia a stack
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        $SUDO install -d -m 755 "{{.SYSTEMD_DIR}}"
+        $SUDO install -m 644 "{{.INSTALL_DIR}}"/deploy/*.service "{{.INSTALL_DIR}}"/deploy/*.target "{{.SYSTEMD_DIR}}/"
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl enable freddo.target
+        $SUDO systemctl restart freddo.target
+
+  deploy:podman:
+    desc: Aplica drop-ins systemd para forçar Podman
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
+          dropin="{{.SYSTEMD_DIR}}/$unit.d"
+          $SUDO install -d -m 755 "$dropin"
+          printf '[Unit]\nWants=\nAfter=network.target\n\n[Service]\nSupplementaryGroups=\nEnvironment=FREDDO_CONTAINER_RUNTIME=podman\nEnvironment=XDG_RUNTIME_DIR={{.XDG_RUNTIME_DIR}}\nEnvironment=FREDDO_PODMAN_SOCKET={{.PODMAN_SOCKET}}\n' \
+            | $SUDO tee "$dropin/10-podman.conf" >/dev/null
+        done
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl restart freddo.target
+        echo "Podman configurado. Socket: {{.PODMAN_SOCKET}}"
+
+  deploy:docker:
+    desc: Remove os drop-ins do Podman e volta ao Docker
+    cmds:
+      - |
+        set -eu
+        SUDO=""
+        [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+        for unit in freddo-api.service freddo-executor.service freddo-collector.service; do
+          $SUDO rm -f "{{.SYSTEMD_DIR}}/$unit.d/10-podman.conf"
+        done
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl restart freddo.target
+
+  deploy:status:
+    desc: Mostra o estado da stack
+    cmds:
+      - systemctl status freddo.target --no-pager
+      - journalctl -u freddo-executor.service -n 30 --no-pager
+
+  deploy:logs:
+    desc: Segue os logs do Executor (use -- para filtrar)
+    cmds:
+      - journalctl -fu freddo-executor.service {{.CLI_ARGS}}
+
+  deploy:restart:
+    desc: Reinicia a stack
+    cmds:
+      - sudo systemctl restart freddo.target
+
+  deploy:
+    desc: Deploy completo (check + arquivos + env + units)
+    cmds:
+      - task: deploy:check
+      - task: deploy:files
+      - task: deploy:env
+      - task: deploy:units

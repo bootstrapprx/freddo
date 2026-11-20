@@ -1,0 +1,25 @@
+[Unit]
+Description=freddo-manager Executor (unico processo autorizado a invocar fmx/Docker)
+After=network.target
+Wants=docker.service
+
+[Service]
+Type=simple
+User=freddo
+Group=freddo
+SupplementaryGroups=docker
+EnvironmentFile=/etc/freddo-manager/executor.env
+WorkingDirectory=/opt/freddo-manager
+ExecStart=/opt/freddo-manager/.venv/bin/freddo-manager executor
+Restart=always
+RestartSec=3
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/freddo-manager /home/freddo/frappe
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

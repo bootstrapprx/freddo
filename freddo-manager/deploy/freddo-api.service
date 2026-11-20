@@ -1,0 +1,24 @@
+[Unit]
+Description=freddo-manager API (host-only, sem acesso ao Docker)
+Requires=freddo-executor.service
+After=freddo-executor.service network.target
+
+[Service]
+Type=simple
+User=freddo-api
+Group=freddo-api
+EnvironmentFile=/etc/freddo-manager/api.env
+WorkingDirectory=/opt/freddo-manager
+ExecStart=/opt/freddo-manager/.venv/bin/freddo-manager serve
+Restart=always
+RestartSec=3
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/freddo-manager
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
