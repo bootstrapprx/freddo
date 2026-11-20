@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from ..collector.collector import Collector
 from ..config import Settings, get_settings
 from ..executor.server import run_executor
-from .routes import alerts, audit, auth, benches, deployment, jobs, shell, system, telemetry, templates
+from .routes import alerts, apps, audit, auth, benches, deployment, jobs, shell, system, telemetry, templates
 from .state import AppState, set_app_state
 
 log = logging.getLogger("freddo.api")
@@ -115,8 +115,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", **state.to_public_dict()}
 
     app.include_router(auth.router, prefix="/api/v1")
+    app.include_router(apps.router, prefix="/api/v1")
     app.include_router(benches.router, prefix="/api/v1")
-    app.include_router(deployment.router, prefix="/api/v1")
     app.include_router(deployment.router, prefix="/api/v1")
     app.include_router(jobs.router, prefix="/api/v1")
     app.include_router(telemetry.router, prefix="/api/v1")

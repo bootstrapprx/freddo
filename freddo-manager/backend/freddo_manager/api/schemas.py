@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from ..apps import validate_app_name, validate_app_ref, validate_repository_url
 from ..executor.allowlist import BENCH_RE
 
 
@@ -106,6 +107,73 @@ class TemplateRequest(BaseModel):
     spec: dict[str, Any]
 
 
+class AppReleaseRequest(BaseModel):
+    ref: str = Field(min_length=1, max_length=128)
+
+    @field_validator("ref")
+    @classmethod
+    def _valid_ref(cls, value: str) -> str:
+        return validate_app_ref(value)
+
+
+class AppCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    repository_url: str = Field(min_length=1, max_length=2048)
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        return validate_app_name(value)
+
+    @field_validator("title")
+    @classmethod
+    def _valid_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title_required")
+        return value
+
+    @field_validator("repository_url")
+    @classmethod
+    def _valid_repo(cls, value: str) -> str:
+        return validate_repository_url(value)
+
+
+class AppUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    repository_url: str = Field(min_length=1, max_length=2048)
+    enabled: bool = True
+
+    @field_validator("repository_url")
+    @classmethod
+    def _valid_repo(cls, value: str) -> str:
+        return validate_repository_url(value)
+
+    @field_validator("title")
+    @classmethod
+    def _valid_title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title_required")
+        return value
+
+
+class AppLifecycleRequest(BaseModel):
+    framework_version: str
+    bench: str = Field(min_length=1, max_length=253)
+    site: str = Field(min_length=1, max_length=253)
+    confirm: str | None = None
+
+    @field_validator("bench", "site")
+    @classmethod
+    def _valid_target(cls, value: str) -> str:
+        if not BENCH_RE.fullmatch(value):
+            raise ValueError("bench_or_site_invalid")
+        return value
+
+
 class DeploymentDomainsRequest(BaseModel):
     domains: list[str] = Field(min_length=1, max_length=20)
 
@@ -137,7 +205,7 @@ class CreateSiteRequest(BaseModel):
     label: str = Field(min_length=1, max_length=63)
     base_domain: str
     version: str = "v15"
-    apps: list[str] = Field(default_factory=lambda: ["erpnext"], min_length=1)
+    app_release_ids: list[str] = Field(default_factory=list, max_length=50)
     environment: Literal["development", "staging", "production"] = "production"
     idempotency_key: str | None = None
 

@@ -122,12 +122,41 @@ async def create_site(payload: CreateSiteRequest, auth: WriteAuth, state: StateD
     if not _token_path(state).is_file():
         raise HTTPException(status_code=409, detail="tunnel_token_not_configured")
 
+    if not payload.app_release_ids:
+        raise HTTPException(status_code=422, detail="app_release_required")
+    if len(payload.app_release_ids) != len(set(payload.app_release_ids)):
+        raise HTTPException(status_code=422, detail="duplicate_app_release")
+    framework = await state.db.get_managed_release("frappe", payload.version)
+    framework_app = await state.db.get_managed_app("frappe")
+    if (
+        not framework or not framework_app or not framework_app["enabled"] or framework_app["archived"]
+        or framework["validation_state"] != "passed" or not framework["validated_commit"]
+    ):
+        raise HTTPException(status_code=409, detail="frappe_release_requires_validation")
+    selected_apps: set[str] = set()
+    for release_id in payload.app_release_ids:
+        release = await state.db.get_managed_release_by_id(release_id)
+        if not release or release["framework_version"] != payload.version:
+            raise HTTPException(status_code=422, detail="app_release_incompatible")
+        if release["app_name"] == "frappe" or release["app_name"] in selected_apps:
+            raise HTTPException(status_code=422, detail="duplicate_app_release")
+        selected_apps.add(release["app_name"])
+        app = await state.db.get_managed_app(release["app_name"])
+        if (
+            not app or not app["enabled"] or app["archived"]
+            or release["validation_state"] != "passed"
+            or release["test_state"] != "passed"
+            or release["tested_commit"] != release["validated_commit"]
+        ):
+            raise HTTPException(status_code=409, detail="app_release_not_tested")
+
     hostname = f"{payload.label}.{payload.base_domain}"
     admin_password = secrets.token_urlsafe(12)
     args = {
         "bench": hostname,
         "version": payload.version,
-        "apps": payload.apps,
+        "apps": ["frappe", "erpnext"],
+        "app_release_ids": payload.app_release_ids,
         "environment": payload.environment,
         "domain": hostname,
         "admin_pass": admin_password,
@@ -141,7 +170,7 @@ async def create_site(payload: CreateSiteRequest, auth: WriteAuth, state: StateD
         target=hostname,
         detail={
             "version": payload.version,
-            "apps": payload.apps,
+            "app_release_ids": payload.app_release_ids,
             "environment": payload.environment,
             "domain": hostname,
             "job_id": job_id,

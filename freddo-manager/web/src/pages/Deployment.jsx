@@ -13,12 +13,14 @@ import { errorMessage } from "@/lib/actions";
 export function Deployment() {
   const queryClient = useQueryClient();
   const config = useQuery({ queryKey: ["deployment-config"], queryFn: endpoints.deploymentConfig });
+  const catalog = useQuery({ queryKey: ["apps"], queryFn: () => endpoints.apps() });
   const [domains, setDomains] = useState([]);
   const [domainInput, setDomainInput] = useState("");
   const [token, setToken] = useState("");
   const [label, setLabel] = useState("");
   const [baseDomain, setBaseDomain] = useState("");
-  const [apps, setApps] = useState("erpnext");
+  const [version, setVersion] = useState("v15");
+  const [appReleaseIds, setAppReleaseIds] = useState([]);
   const [environment, setEnvironment] = useState("production");
   const [createdSite, setCreatedSite] = useState(null);
 
@@ -94,7 +96,8 @@ export function Deployment() {
     deploySite.mutate({
       label: label.trim(),
       base_domain: baseDomain,
-      apps: apps.split(",").map((app) => app.trim()).filter(Boolean),
+      version,
+      app_release_ids: appReleaseIds,
       environment,
     });
   }
@@ -106,7 +109,10 @@ export function Deployment() {
   const domainsSaved = JSON.stringify(domains) === JSON.stringify(config.data?.domains || []);
   const busy = saveDomains.isPending || saveToken.isPending || removeToken.isPending || tunnelAction.isPending;
   const hasPreview = Boolean(label.trim() && baseDomain);
-  const hasApps = apps.split(",").some((app) => app.trim());
+  const availableApps = (catalog.data || []).filter((app) => app.enabled && !app.archived).flatMap((app) =>
+    app.releases.filter((release) => release.framework_version === version && release.validation_state === "passed" && release.test_state === "passed" && release.tested_commit === release.validated_commit).map((release) => ({ app, release })),
+  );
+  const hasApps = appReleaseIds.length > 0;
   const preview = hasPreview ? `${label.trim().toLowerCase()}.${baseDomain}` : "seu-site.dominio";
 
   return (
@@ -178,7 +184,20 @@ export function Deployment() {
                   {domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}
                 </select>
               </Field>
-              <Field label="Apps (separados por vírgula)"><Input aria-label="Apps" value={apps} onChange={(event) => setApps(event.target.value)} /></Field>
+              <Field label="Versão Frappe">
+                <select aria-label="Versão Frappe" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={version} onChange={(event) => { setVersion(event.target.value); setAppReleaseIds([]); }}>
+                  <option value="v14">v14</option><option value="v15">v15</option><option value="v16">v16</option><option value="develop">develop</option>
+                </select>
+              </Field>
+              <Field label="Apps testados" hint="Somente releases validadas e testadas para esta versão Frappe.">
+                <div className="max-h-28 space-y-1 overflow-auto rounded-md border border-input p-2">
+                  {availableApps.filter(({ app }) => app.name !== "frappe").map(({ app, release }) => <label key={release.id} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={appReleaseIds.includes(release.id)} onChange={(event) => setAppReleaseIds((ids) => event.target.checked ? [...ids, release.id] : ids.filter((id) => id !== release.id))} />
+                    {app.title} <span className="text-muted-foreground">{app.name} · {release.ref}</span>
+                  </label>)}
+                  {!availableApps.some(({ app }) => app.name !== "frappe") && <span className="text-xs text-muted-foreground">Nenhum app compatível foi testado.</span>}
+                </div>
+              </Field>
               <Field label="Ambiente">
                 <select aria-label="Ambiente" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={environment} onChange={(event) => setEnvironment(event.target.value)}>
                   <option value="production">production</option><option value="staging">staging</option><option value="development">development</option>

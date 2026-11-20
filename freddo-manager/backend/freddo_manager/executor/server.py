@@ -42,7 +42,7 @@ def peer_credentials(sock: socket.socket) -> tuple[int, int] | None:
 class ExecutorServer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.allowlist = Allowlist(settings.fm_bin)
+        self.allowlist = Allowlist(settings.fm_bin, state_db_path=settings.state_db)
         self.compat = ContainerCompat(settings)
         self.executor = JobExecutor(settings, self.allowlist, self.compat)
         self.fm = FmAdapter(settings, self.executor, self.allowlist, self.compat)
@@ -152,7 +152,7 @@ class ExecutorServer:
         job_id = str(message.get("job_id", ""))
         op = str(message.get("op", ""))
         args = message.get("args") or {}
-        if not job_id or not op.startswith(("bench.", "ssl.", "ngrok.", "services.", "fm.", "tunnel.")):
+        if not job_id or not op.startswith(("bench.", "ssl.", "ngrok.", "services.", "fm.", "tunnel.", "app.")):
             await write_message(writer, {"id": request_id, "type": "error", "payload": "invalid_job"})
             return
         try:

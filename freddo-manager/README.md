@@ -255,6 +255,26 @@ Comandos CLI de operação: `freddo-manager bootstrap`, `configure`, `serve`, `e
 validar a associação ao domínio configurado. O `--help` de cada
 subcomando documenta as opções.
 
+## Apps
+
+A área **Apps** mantém URLs Git HTTPS/SSH sem credenciais, uma ref por versão do Frappe e os
+resultados de validação e teste. As releases só aparecem no Deploy quando o repositório foi
+validado e a suíte passou para o mesmo commit. Para adicionar uma release, salve sua ref,
+valide o repositório e execute o teste. Credenciais de repositórios privados devem estar
+disponíveis ao processo Frappe-Manager no host; não coloque tokens na URL.
+
+Os testes criam um bench descartável `freddo-app-test-*`, executam `bench run-tests --app`
+e tentam removê-lo mesmo após falha. Se a remoção falhar, o job reporta isso e o operador
+deve remover o bench temporário. Testes nunca são executados em benches existentes.
+
+Na página Apps, install adiciona o app a um site existente; update faz backup com arquivos,
+troca para a ref configurada e migra o site. **Prévia remoção** executa o dry-run do Frappe.
+Remover exige step-up, confirmação `app@bench` e cria backup antes de desinstalar o app do
+site. O código-fonte permanece no bench para não remover um app ainda usado por outro site.
+
+O Deploy recebe IDs de releases em vez de URLs ou nomes livres e o Executor confere novamente
+compatibilidade, estado habilitado e commit testado antes de criar o bench.
+
 ## Segurança
 
 - senha Argon2id + TOTP obrigatório, bloqueio progressivo e códigos de recuperação;

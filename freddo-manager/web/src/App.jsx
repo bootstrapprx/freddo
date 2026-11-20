@@ -4,6 +4,7 @@ import { Layout } from "@/components/Layout";
 import { Toaster } from "@/components/Toaster";
 import { LoadingState } from "@/components/Common";
 import { Alerts } from "@/pages/Alerts";
+import { Apps } from "@/pages/Apps";
 import { Audit } from "@/pages/Audit";
 import { Benches } from "@/pages/Benches";
 import { Dashboard } from "@/pages/Dashboard";
@@ -36,6 +37,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="deployment" element={<Deployment />} />
           <Route path="benches" element={<Benches />} />
+          <Route path="apps" element={<Apps />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="telemetry" element={<Telemetry />} />
           <Route path="alerts" element={<Alerts />} />

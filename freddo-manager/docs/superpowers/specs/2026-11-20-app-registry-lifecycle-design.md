@@ -17,7 +17,7 @@ run commands in a bench container.
 ## Design
 
 - Add a persistent app registry to the existing SQLite state DB. Each app has a unique
-  Python package name, HTTPS repository URL, enabled/archive state, and releases keyed
+  Python package name, HTTPS or SSH repository URL, enabled/archive state, and releases keyed
   by supported Frappe version. Each release stores its branch/tag/ref, latest repository
   validation result, latest isolated test result, timestamps, and the commit tested.
 - Seed the core apps (`frappe`, `erpnext`, `hrms`) as unverified registry entries. A
@@ -44,14 +44,17 @@ run commands in a bench container.
 ## App and release validation
 
 - App names must be valid Python package identifiers and unique.
-- Repositories must be HTTPS URLs without embedded username/password or query secrets.
+- Repositories may use HTTPS or SSH URLs. Reject embedded username/password, token query
+  values, local paths, and non-network schemes. Private repositories use operator-provisioned
+  SSH keys on the Executor host; the catalog never stores credentials.
 - Release refs must be nonempty branch/tag names from a conservative allowlist; resolved
   commit SHA is stored when validation/test completes.
 - Only an exact successful test result for the selected Frappe version, ref, and commit
   makes a release deployable. A failed or stale test remains visible but cannot be
   selected for a new public deploy.
-- Public repositories are supported in this slice. Private-repository credentials are
-  explicitly out of scope; app URLs must not contain credentials.
+- Per-app credentials and credential management are out of scope; app URLs must not
+  contain credentials. Private repositories can use SSH keys already provisioned for
+  the Executor account.
 
 ## Frappe command behavior
 

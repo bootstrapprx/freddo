@@ -86,6 +86,34 @@ CREATE TABLE IF NOT EXISTS app_setting (
   name TEXT PRIMARY KEY,
   value_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS managed_app (
+  name TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  repository_url TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS managed_app_release (
+  id TEXT PRIMARY KEY,
+  app_name TEXT NOT NULL REFERENCES managed_app(name),
+  framework_version TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  validation_state TEXT NOT NULL DEFAULT 'unverified',
+  validated_commit TEXT,
+  validation_error TEXT,
+  validated_at INTEGER,
+  validation_job_id TEXT,
+  test_state TEXT NOT NULL DEFAULT 'untested',
+  tested_commit TEXT,
+  tested_at INTEGER,
+  test_job_id TEXT,
+  test_summary TEXT,
+  archived INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(app_name, framework_version)
+);
 CREATE TABLE IF NOT EXISTS alert_rule (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -127,10 +155,35 @@ class StateDB:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA foreign_keys=ON")
             await db.executescript(SCHEMA)
+            columns = {row[1] for row in await (await db.execute("PRAGMA table_info(managed_app_release)")).fetchall()}
+            if "validation_job_id" not in columns:
+                await db.execute("ALTER TABLE managed_app_release ADD COLUMN validation_job_id TEXT")
             await db.execute(
                 "INSERT OR IGNORE INTO app_setting (name, value_json) VALUES (?, ?)",
                 ("deployment_domains", json.dumps(["kodoo.online", "kalkulisto.com.br"])),
             )
+            core_apps = (
+                ("frappe", "Frappe Framework", "https://github.com/frappe/frappe.git"),
+                ("erpnext", "ERPNext", "https://github.com/frappe/erpnext.git"),
+                ("hrms", "Frappe HRMS", "https://github.com/frappe/hrms.git"),
+            )
+            for name, title, repo in core_apps:
+                await db.execute(
+                    "INSERT OR IGNORE INTO managed_app (name, title, repository_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (name, title, repo, int(time.time()), int(time.time())),
+                )
+            for app_name, refs in {
+                "frappe": {"v14": "version-14", "v15": "version-15", "v16": "version-16", "develop": "develop"},
+                "erpnext": {"v14": "version-14", "v15": "version-15", "v16": "version-16", "develop": "develop"},
+                "hrms": {"v14": "version-14", "v15": "version-15", "v16": "version-16", "develop": "develop"},
+            }.items():
+                for framework_version, ref in refs.items():
+                    await db.execute(
+                        """INSERT OR IGNORE INTO managed_app_release
+                           (id, app_name, framework_version, ref, updated_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (f"{app_name}:{framework_version}", app_name, framework_version, ref, int(time.time())),
+                    )
             await db.commit()
 
     @asynccontextmanager
@@ -329,6 +382,169 @@ class StateDB:
                 "ON CONFLICT(name) DO UPDATE SET value_json = excluded.value_json",
                 (name, json.dumps(value, sort_keys=True)),
             )
+
+    async def list_managed_apps(self, include_archived: bool = False) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            where = "" if include_archived else "WHERE archived = 0"
+            apps = await (await db.execute(f"SELECT * FROM managed_app {where} ORDER BY name")).fetchall()
+            result = []
+            for app in apps:
+                releases = await (await db.execute(
+                    "SELECT * FROM managed_app_release WHERE app_name = ? AND archived = 0 ORDER BY framework_version", (app["name"],)
+                )).fetchall()
+                result.append({
+                    **dict(app),
+                    "enabled": bool(app["enabled"]),
+                    "archived": bool(app["archived"]),
+                    "releases": [dict(release) for release in releases],
+                })
+            return result
+
+    async def get_managed_app(self, name: str) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            app = await (await db.execute("SELECT * FROM managed_app WHERE name=?", (name,))).fetchone()
+            if not app:
+                return None
+            releases = await (await db.execute(
+                "SELECT * FROM managed_app_release WHERE app_name=? AND archived=0 ORDER BY framework_version", (name,)
+            )).fetchall()
+        return {
+            **dict(app),
+            "enabled": bool(app["enabled"]),
+            "archived": bool(app["archived"]),
+            "releases": [dict(release) for release in releases],
+        }
+
+    async def get_managed_release(self, app_name: str, framework_version: str) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT * FROM managed_app_release WHERE app_name = ? AND framework_version = ? AND archived = 0",
+                (app_name, framework_version),
+            )).fetchone()
+        return dict(row) if row else None
+
+    async def get_managed_release_by_id(self, release_id: str) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT * FROM managed_app_release WHERE id=? AND archived=0", (release_id,)
+            )).fetchone()
+        return dict(row) if row else None
+
+    async def save_managed_app(self, name: str, title: str, repository_url: str, enabled: bool = True) -> None:
+        now = int(time.time())
+        async with self.connect(write=True) as db:
+            old = await (await db.execute("SELECT repository_url FROM managed_app WHERE name = ?", (name,))).fetchone()
+            await db.execute(
+                """INSERT INTO managed_app (name, title, repository_url, enabled, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET title=excluded.title,
+                   repository_url=excluded.repository_url, enabled=excluded.enabled, archived=0, updated_at=excluded.updated_at""",
+                (name, title, repository_url, int(enabled), now, now),
+            )
+            if old and old["repository_url"] != repository_url:
+                await db.execute(
+                    """UPDATE managed_app_release SET validation_state='unverified', validated_commit=NULL,
+                       validation_error=NULL, validated_at=NULL, validation_job_id=NULL, test_state='untested', tested_commit=NULL,
+                       tested_at=NULL, test_job_id=NULL, test_summary=NULL, updated_at=? WHERE app_name=?""",
+                    (now, name),
+                )
+
+    async def save_managed_release(self, app_name: str, framework_version: str, ref: str) -> None:
+        import secrets
+
+        now = int(time.time())
+        async with self.connect(write=True) as db:
+            old = await (await db.execute(
+                "SELECT id, ref FROM managed_app_release WHERE app_name=? AND framework_version=?",
+                (app_name, framework_version),
+            )).fetchone()
+            release_id = old["id"] if old else f"{app_name}:{framework_version}:{secrets.token_hex(6)}"
+            await db.execute(
+                """INSERT INTO managed_app_release (id, app_name, framework_version, ref, updated_at)
+                   VALUES (?, ?, ?, ?, ?) ON CONFLICT(app_name, framework_version) DO UPDATE SET
+                   ref=excluded.ref, updated_at=excluded.updated_at,
+                   archived=0,
+                   validation_state=CASE WHEN managed_app_release.ref != excluded.ref THEN 'unverified' ELSE managed_app_release.validation_state END,
+                   validated_commit=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.validated_commit END,
+                   validation_error=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.validation_error END,
+                   validated_at=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.validated_at END,
+                   validation_job_id=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.validation_job_id END,
+                   test_state=CASE WHEN managed_app_release.ref != excluded.ref THEN 'untested' ELSE managed_app_release.test_state END,
+                   tested_commit=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.tested_commit END,
+                   tested_at=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.tested_at END,
+                   test_job_id=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.test_job_id END,
+                   test_summary=CASE WHEN managed_app_release.ref != excluded.ref THEN NULL ELSE managed_app_release.test_summary END""",
+                (release_id, app_name, framework_version, ref, now),
+            )
+
+    async def archive_managed_release(self, app_name: str, framework_version: str) -> bool:
+        async with self.connect(write=True) as db:
+            cursor = await db.execute(
+                "UPDATE managed_app_release SET archived=1, updated_at=? WHERE app_name=? AND framework_version=?",
+                (int(time.time()), app_name, framework_version),
+            )
+            return cursor.rowcount > 0
+
+    async def archive_managed_app(self, name: str) -> bool:
+        async with self.connect(write=True) as db:
+            cursor = await db.execute(
+                "UPDATE managed_app SET archived=1, enabled=0, updated_at=? WHERE name=?",
+                (int(time.time()), name),
+            )
+            return cursor.rowcount > 0
+
+    async def record_app_validation(
+        self,
+        app_name: str,
+        framework_version: str,
+        expected_url: str,
+        expected_ref: str,
+        state: str,
+        commit: str | None,
+        error: str | None,
+    ) -> bool:
+        now = int(time.time())
+        async with self.connect(write=True) as db:
+            cursor = await db.execute(
+                """UPDATE managed_app_release SET validation_state=?, validated_commit=?, validation_error=?,
+                   validated_at=?, test_state='untested', tested_commit=NULL, tested_at=NULL, test_job_id=NULL,
+                   test_summary=NULL, updated_at=? WHERE app_name=? AND framework_version=? AND ref=?
+                   AND EXISTS (SELECT 1 FROM managed_app WHERE name=? AND repository_url=?)""",
+                (state, commit, error, now, now, app_name, framework_version, expected_ref, app_name, expected_url),
+            )
+            return cursor.rowcount > 0
+
+    async def record_app_validation_job(self, app_name: str, framework_version: str, job_id: str) -> None:
+        async with self.connect(write=True) as db:
+            await db.execute(
+                "UPDATE managed_app_release SET validation_state='running', validation_job_id=?, validation_error=NULL, test_state='untested', tested_commit=NULL, tested_at=NULL, test_job_id=NULL, test_summary=NULL, updated_at=? WHERE app_name=? AND framework_version=?",
+                (job_id, int(time.time()), app_name, framework_version),
+            )
+
+    async def record_app_test_result(
+        self,
+        app_name: str,
+        framework_version: str,
+        expected_url: str,
+        expected_ref: str,
+        commit: str,
+        state: str,
+        job_id: str,
+        summary: str | None,
+    ) -> bool:
+        now = int(time.time())
+        tested_commit = commit if state == "passed" else None
+        async with self.connect(write=True) as db:
+            cursor = await db.execute(
+                """UPDATE managed_app_release SET test_state=?, tested_commit=?, tested_at=?, test_job_id=?,
+                   test_summary=?, updated_at=? WHERE app_name=? AND framework_version=? AND ref=?
+                   AND validation_state='passed' AND validated_commit=?
+                   AND EXISTS (SELECT 1 FROM managed_app WHERE name=? AND repository_url=? AND enabled=1 AND archived=0)""",
+                (
+                    state, tested_commit, now, job_id, summary, now, app_name, framework_version, expected_ref,
+                    commit, app_name, expected_url,
+                ),
+            )
+            return cursor.rowcount > 0
 
     async def list_templates(self) -> list[sqlite3.Row]:
         async with self.connect() as db:
