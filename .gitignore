@@ -1,2 +1,5 @@
 freddo-manager/.state/dev/telemetria.db
 freddo-manager/.state/dev/telemetria.db
+freddo-manager/.state/dev/secret.key
+freddo-manager/.state/dev/state.db
+freddo-manager/.state/dev/telemetria.db
