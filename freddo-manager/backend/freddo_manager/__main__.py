@@ -5,13 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
 import logging
 import os
 import secrets
 import sys
 import time
-import hashlib
 from pathlib import Path
 
 from .audit import AuditService
@@ -68,7 +68,7 @@ def _bootstrap(
     async def run() -> None:
         await db.initialize()
         existing = await db.get_credential()
-        if setup_token:
+        if setup_token or (password is None and not no_totp):
             if existing:
                 print("Credencial ja existe; token de bootstrap nao se aplica.", file=sys.stderr)
                 raise SystemExit(1)
@@ -161,8 +161,8 @@ def main() -> int:
     parser.add_argument("--version", action="version", version="freddo-manager 0.1.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_bootstrap = sub.add_parser("bootstrap", help="cria a credencial unica e o TOTP")
-    p_bootstrap.add_argument("--password", help="senha (omitido para digitar com seguranca)")
+    p_bootstrap = sub.add_parser("bootstrap", help="gera token inicial ou configura credencial localmente")
+    p_bootstrap.add_argument("--password", help="define senha diretamente (omitido para emitir token de uso unico)")
     p_bootstrap.add_argument("--no-totp", action="store_true", help="nao exigir segundo fator (nao recomendado)")
     p_bootstrap.add_argument("--force", action="store_true", help="substitui a credencial existente")
     p_bootstrap.add_argument("--setup-token", action="store_true", help="emite token de uso unico para configurar a credencial no app")
@@ -184,6 +184,8 @@ def main() -> int:
     sub.add_parser("runtime", help="mostra o runtime de containers detectado (Docker/Podman)")
 
     args = parser.parse_args()
+    if args.command == "bootstrap" and args.setup_token and (args.password is not None or args.no_totp):
+        parser.error("--setup-token nao pode ser combinado com --password ou --no-totp")
     settings = get_settings()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)

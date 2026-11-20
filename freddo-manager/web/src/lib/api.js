@@ -110,6 +110,7 @@ export const endpoints = {
   disconnectTunnel: () => api("/deployment/tunnel/disconnect", { method: "POST", body: {} }),
   createSite: (data) => api("/deployment/sites", { method: "POST", body: data }),
   authSetup: () => api("/auth/setup"),
+  bootstrap: (data) => api("/auth/bootstrap", { method: "POST", body: data }),
   login: (data) => api("/auth/login", { method: "POST", body: data }),
   logout: () => api("/auth/logout", { method: "POST" }),
   me: () => api("/auth/me"),

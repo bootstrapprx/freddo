@@ -41,8 +41,8 @@ uv venv .venv && uv pip install -e '.[dev]'
 source .venv/bin/activate
 
 # solicita a raiz dos benches (sugestão: ~/frappe), salva em
-# $FREDDO_HOME/config.json e cria a credencial única + TOTP
-freddo-manager bootstrap
+# $FREDDO_HOME/config.json e emite um token de configuracao inicial
+task bootstrap
 
 # opcional: trocar a raiz depois
 freddo-manager configure
@@ -61,13 +61,15 @@ cd web && npm install && npm run dev
 ```
 
 Abra `http://localhost:5173`. A API fica em `http://127.0.0.1:8710/api/v1`.
+Cole o token exibido no terminal na tela inicial para definir a senha e configurar TOTP.
+O token fica salvo somente como hash, pode ser usado uma vez e expira em 24 horas.
 
 ### Produção (systemd + Cloudflare Access)
 
 O caminho recomendado é `task deploy`: ele cria as contas `freddo-api` e
 `freddo-collector`, os diretórios com dono/permissões corretos, copia o código, gera os
-`.env` com o uid/gid reais da conta da API, cria a credencial (senha digitada no terminal)
-e instala/reinicia os units. O usuário dono dos benches (`EXEC_USER`, padrão `freddo`) deve
+`.env` com o uid/gid reais da conta da API, emite um token de bootstrap e instala/reinicia
+os units. Use esse token na tela local para definir a senha e registrar TOTP. O usuário dono dos benches (`EXEC_USER`, padrão `freddo`) deve
 existir antes; em hosts Docker ele precisa pertencer ao grupo `docker`.
 
 ```bash
@@ -90,10 +92,12 @@ continua operando os benches existentes pelo Frappe-Manager e Docker/Podman. O c
 `FM_HOME` escolhido também é aplicado ao unit do Executor, sem depender de
 `/home/freddo/frappe`.
 
-Para bootstrap sem segundo fator, passe `--no-totp`:
-`task deploy:bootstrap -- --no-totp --force`. Para instalação manual, os passos
-equivalentes estão em [`Taskfile.yml`](Taskfile.yml) (`deploy:prereq`, `deploy:files`,
-`deploy:env`, `deploy:bootstrap`, `deploy:units`).
+O bootstrap padrão emite um token aleatório de uso único, válido por 24 horas; use-o na
+tela local para criar a senha e configurar TOTP. Para configurar somente pela CLI, passe
+uma senha explicitamente (`freddo-manager bootstrap --password ...`); `--no-totp` continua
+disponível apenas nesse modo. Para instalação manual, os passos equivalentes estão em
+[`Taskfile.yml`](Taskfile.yml) (`deploy:prereq`, `deploy:files`, `deploy:env`,
+`deploy:bootstrap`, `deploy:units`).
 
 O Executor roda como dono dos benches (grupo `docker` em hosts Docker); a API roda como
 `freddo-api`, sem acesso ao runtime, e só consegue falar com o socket graças ao

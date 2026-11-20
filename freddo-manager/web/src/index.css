@@ -29,10 +29,14 @@
     --chart-4: 23 92% 77%;
     --chart-5: 343 81% 75%;
     --radius: 0.5rem;
-    --font-heading: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --font-body: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --font-display: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-heading:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-body:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-mono:
+      "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     --sidebar-background: 240 21% 12%;
     --sidebar-foreground: 226 64% 88%;
     --sidebar-primary: 267 84% 81%;

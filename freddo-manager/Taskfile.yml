@@ -211,6 +211,10 @@ tasks:
     env:
       FREDDO_HOME: "{{.DEV_HOME}}"
       FREDDO_EMBED_EXECUTOR: "1"
+      FREDDO_API_HOST: 127.0.0.1
+      FREDDO_PUBLIC_ORIGIN: http://127.0.0.1:5173
+      FREDDO_CORS_ORIGINS: '["http://127.0.0.1:5173", "http://localhost:5173"]'
+      FREDDO_REQUIRE_CLOUDFLARE_JWT: "0"
     cmds:
       - 'FREDDO_EXECUTOR_UID="$(id -u)" FREDDO_EXECUTOR_GID="$(id -g)" "{{.PYTHON}}" "{{.ROOT_DIR}}/scripts/dev.py" "{{.FREDDO_BIN}}" "{{.WEB_DIR}}"'
 
@@ -219,6 +223,10 @@ tasks:
     env:
       FREDDO_HOME: "{{.DEV_HOME}}"
       FREDDO_EMBED_EXECUTOR: "1"
+      FREDDO_API_HOST: 127.0.0.1
+      FREDDO_PUBLIC_ORIGIN: http://127.0.0.1:5173
+      FREDDO_CORS_ORIGINS: '["http://127.0.0.1:5173", "http://localhost:5173"]'
+      FREDDO_REQUIRE_CLOUDFLARE_JWT: "0"
     cmds:
       - 'FREDDO_EXECUTOR_UID="$(id -u)" FREDDO_EXECUTOR_GID="$(id -g)" "{{.FREDDO_BIN}}" serve {{.CLI_ARGS}}'
 
@@ -238,7 +246,9 @@ tasks:
       - '"{{.FREDDO_BIN}}" catalog'
 
   bootstrap:
-    desc: 'Cria a credencial (ex.: task bootstrap -- --password "Senha!" --no-totp --force)'
+    desc: Emite um token de uso unico para configurar a credencial pelo app
+    env:
+      FREDDO_HOME: "{{.DEV_HOME}}"
     cmds:
       - '"{{.FREDDO_BIN}}" bootstrap {{.CLI_ARGS}}'
 
@@ -384,7 +394,7 @@ tasks:
         echo "envs gerados em {{.CONFIG_DIR}} (uid/gid do executor: $EXEC_UID/$EXEC_GID)"
 
   deploy:bootstrap:
-    desc: Cria a credencial da API como usuario dono dos benches
+    desc: Emite token inicial para configurar a credencial da API pelo app
     cmds:
       - |
         set -eu

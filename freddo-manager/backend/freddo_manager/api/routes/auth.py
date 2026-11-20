@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
-import time
+import json
 import secrets
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -19,12 +19,11 @@ from ...security import (
     generate_totp_secret,
     hash_password,
     hash_recovery_code,
-    hash_recovery_code,
     new_csrf_token,
     new_session_token,
+    totp_provisioning_uri,
     verify_password,
     verify_totp,
-    totp_provisioning_uri,
 )
 from ..deps import StateDep, WriteAuth, _client_ip, verify_cloudflare_access, verify_csrf
 from ..schemas import BootstrapRequest, LoginRequest, StepupRequest
@@ -65,10 +64,18 @@ async def setup(state: StateDep) -> dict:
 async def bootstrap(payload: BootstrapRequest, state: StateDep) -> Response:
     if await state.db.get_credential() is not None:
         raise HTTPException(status_code=409, detail="already_bootstrapped")
+    bootstrap = await state.db.get_setting("bootstrap_token")
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    if (
+        not bootstrap
+        or bootstrap.get("expires_at", 0) <= int(time.time())
+        or not secrets.compare_digest(bootstrap.get("hash", ""), token_hash)
+    ):
+        raise HTTPException(status_code=401, detail="invalid_or_expired_bootstrap_token")
     secret = generate_totp_secret()
     codes = generate_recovery_codes()
     consumed = await state.db.consume_bootstrap_token(
-        hashlib.sha256(payload.token.encode()).hexdigest(),
+        token_hash,
         hash_password(payload.password),
         encrypt_secret(secret, state.settings.secret_key_file),
         [hash_recovery_code(code) for code in codes],
